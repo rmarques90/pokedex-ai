@@ -123,6 +123,44 @@ test('searches only the requested collection, honors topK, and returns validated
   );
 });
 
+test('looks up records by National Pokedex ID, exact name, and type', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'pokedex-lance-lookup-test-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const connection = await connect(directory);
+  const store = new LanceDbVectorStore(connection);
+  const indexedRows = await rows('lookup');
+  await store.replaceCollection('pokedex_vectors', indexedRows);
+
+  const byId = await store.lookup('pokedex_vectors', { kind: 'id', id: 3 });
+  assert.equal(byId.length, 1);
+  assert.equal(byId[0]?.id, 3);
+  assert.equal(byId[0]?.pokemonName, 'venusaur');
+
+  const byName = await store.lookup('pokedex_vectors', { kind: 'name', name: '  VENUSAUR  ' });
+  assert.equal(byName.length, 1);
+  assert.equal(byName[0]?.id, 3);
+  assert.ok(byName[0]?.sources.some(({ url }) => url.includes('Venusaur')));
+
+  const grass = await store.lookup('pokedex_vectors', { kind: 'type', type: 'grass' });
+  assert.ok(grass.length > 1);
+  assert.deepEqual(grass.map(({ id }) => id).sort((left, right) => left - right),
+    indexedRows.filter(({ types }) => types.includes('grass')).map(({ id }) => id).sort((left, right) => left - right));
+  assert.equal(await (await connection.openTable('pokedex_vectors')).countRows(), 151);
+});
+
+test('returns an empty lookup result for missing records and rejects invalid lookup input', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'pokedex-lance-lookup-test-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const connection = await connect(directory);
+  const store = new LanceDbVectorStore(connection);
+  await store.replaceCollection('pokedex_vectors', await rows('lookup'));
+
+  assert.deepEqual(await store.lookup('pokedex_vectors', { kind: 'id', id: 999 }), []);
+  assert.deepEqual(await store.lookup('pokedex_vectors', { kind: 'name', name: 'not-a-pokemon' }), []);
+  await assert.rejects(store.lookup('pokedex_vectors', { kind: 'id', id: 0 }));
+  assert.deepEqual((await connection.tableNames()).sort(), ['pokedex_vectors']);
+});
+
 test('rejects invalid search vectors and topK before querying LanceDB', async (context) => {
   const directory = await mkdtemp(join(tmpdir(), 'pokedex-lance-search-test-'));
   context.after(() => rm(directory, { recursive: true, force: true }));

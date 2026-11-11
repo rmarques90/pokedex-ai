@@ -12,6 +12,8 @@ test('CLI and HTTP use the same composed answer service and return consistent re
     id: 1,
     text: 'Bulbasaur is a Grass and Poison Pokémon.',
     pokemonName: 'bulbasaur',
+    types: ['grass', 'poison'],
+    total: 318,
     sources: [{ pokemonId: 1, pokemonName: 'bulbasaur', url: 'https://bulbapedia.bulbagarden.net/wiki/Bulbasaur_(Pok%C3%A9mon)' }],
   };
   const store: LocalVectorStoreHandle['store'] = {
@@ -23,6 +25,7 @@ test('CLI and HTTP use the same composed answer service and return consistent re
       assert.equal(topK, 5);
       return [evidence];
     },
+    async lookup() { return [evidence]; },
   };
   const service = await createAskService({
     environment: { LANCEDB_COLLECTION_NAME: 'pokedex_vectors', OPENROUTER_API_KEY: 'integration-test-key' },

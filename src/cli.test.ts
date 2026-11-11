@@ -36,6 +36,18 @@ test('prints expected abstention and exits successfully', async () => {
   assert.deepEqual(captured.stdout, [result.answer]);
 });
 
+test('prints a direct Pokémon lookup before its citations', async () => {
+  const captured = output();
+  const result: AskResult = {
+    answer: 'O Pokémon #3 é Venusaur.',
+    abstained: false,
+    sources: [{ pokemonId: 3, pokemonName: 'venusaur', url: 'https://pokeapi.co/api/v2/pokemon/3/' }],
+  };
+  const exitCode = await runCli(['ask', 'qual', 'o', 'pokemon', 'numero', '3?'], { async ask() { return result; } }, captured.io);
+  assert.equal(exitCode, 0);
+  assert.deepEqual(captured.stdout, [result.answer, `Sources:\n- venusaur: ${result.sources[0]?.url}`]);
+});
+
 test('rejects a missing or empty question before calling the service', async () => {
   const captured = output();
   let called = false;

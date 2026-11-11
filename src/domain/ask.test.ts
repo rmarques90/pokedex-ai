@@ -5,6 +5,7 @@ import {
   AskRequestSchema,
   AskResultSchema,
   AskSourceSchema,
+  PokemonLookupSchema,
   RetrievedEvidenceSchema,
 } from './ask.js';
 
@@ -27,9 +28,18 @@ test('source references require a valid Pokémon identity and URL', () => {
 });
 
 test('retrieved evidence requires non-empty text and source references', () => {
-  const evidence = { id: 1, text: 'Grass and Poison Pokémon.', pokemonName: 'Bulbasaur', sources: [source], score: 0.2 };
+  const evidence = { id: 1, text: 'Grass and Poison Pokémon.', pokemonName: 'Bulbasaur', types: ['grass', 'poison'], total: 318, sources: [source], score: 0.2 };
   assert.deepEqual(RetrievedEvidenceSchema.parse(evidence), evidence);
   assert.throws(() => RetrievedEvidenceSchema.parse({ ...evidence, sources: [] }));
+});
+
+test('Pokemon lookup criteria validate IDs, names, and types', () => {
+  assert.deepEqual(PokemonLookupSchema.parse({ kind: 'id', id: 3 }), { kind: 'id', id: 3 });
+  assert.deepEqual(PokemonLookupSchema.parse({ kind: 'name', name: 'bulbasaur' }), { kind: 'name', name: 'bulbasaur' });
+  assert.deepEqual(PokemonLookupSchema.parse({ kind: 'type', type: 'grass' }), { kind: 'type', type: 'grass' });
+  assert.throws(() => PokemonLookupSchema.parse({ kind: 'id', id: 0 }));
+  assert.throws(() => PokemonLookupSchema.parse({ kind: 'name', name: '  ' }));
+  assert.throws(() => PokemonLookupSchema.parse({ kind: 'type', type: 'grass', extra: true }));
 });
 
 test('answer and abstention results accept valid shapes and reject invalid ones', () => {

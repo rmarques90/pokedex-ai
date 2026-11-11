@@ -7,6 +7,8 @@ const evidence: RetrievedEvidence = {
   id: 1,
   text: 'Bulbasaur is a Grass and Poison Pokémon. Its seed grows as it absorbs sunlight.',
   pokemonName: 'bulbasaur',
+  types: ['grass', 'poison'],
+  total: 318,
   sources: [{ pokemonId: 1, pokemonName: 'bulbasaur', url: 'https://bulbapedia.bulbagarden.net/wiki/Bulbasaur_(Pok%C3%A9mon)' }],
 };
 

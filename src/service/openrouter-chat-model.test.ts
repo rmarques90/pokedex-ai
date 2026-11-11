@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CHAT_MODEL, OPENROUTER_BASE_URL } from '../constants.js';
-import { createOpenRouterChatModel, getOpenRouterChatOptions, invokeStructuredAnswer } from './openrouter-chat-model.js';
+import { ANSWER_SYSTEM_PROMPT, createOpenRouterChatModel, getOpenRouterChatOptions, invokeStructuredAnswer } from './openrouter-chat-model.js';
 import { ModelGenerationError } from '../domain/ask.js';
 
 test('configures the requested OpenRouter model, endpoint, and runtime API key', () => {
@@ -16,6 +16,16 @@ test('configures the requested OpenRouter model, endpoint, and runtime API key',
 test('creates a LangChain chat client without exposing credentials in its public configuration', () => {
   const client = createOpenRouterChatModel('test-api-key');
   assert.equal(typeof client.invoke, 'function');
+});
+
+test('answer instructions require direct, concise, evidence-grounded responses', () => {
+  assert.match(ANSWER_SYSTEM_PROMPT, /same language as the user question/);
+  assert.match(ANSWER_SYSTEM_PROMPT, /direct answer in the first sentence/);
+  assert.match(ANSWER_SYSTEM_PROMPT, /Address every distinct request/);
+  assert.match(ANSWER_SYSTEM_PROMPT, /individual base stats/);
+  assert.match(ANSWER_SYSTEM_PROMPT, /measurable criterion/);
+  assert.match(ANSWER_SYSTEM_PROMPT, /never imply a global ranking from partial evidence/);
+  assert.match(ANSWER_SYSTEM_PROMPT, /do not lead with a long abstention/);
 });
 
 test('validates structured model output and redacts provider failures', async () => {

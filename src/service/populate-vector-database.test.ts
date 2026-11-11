@@ -22,6 +22,7 @@ function fakeStore() {
       return { collectionExisted: calls.length > 1, databaseCollectionNames: [name] };
     },
     async searchByVector() { return []; },
+    async lookup() { return []; },
   };
   return { calls, store };
 }

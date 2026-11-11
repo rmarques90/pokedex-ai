@@ -48,6 +48,19 @@ test('POST /ask returns an expected abstention with no sources', async () => {
   });
 });
 
+test('POST /ask preserves a direct lookup answer and its source references', async () => {
+  const directResult: AskResult = {
+    answer: 'O Pokémon #3 é Venusaur.',
+    abstained: false,
+    sources: [{ pokemonId: 3, pokemonName: 'venusaur', url: 'https://pokeapi.co/api/v2/pokemon/3/' }],
+  };
+  await withServer(async () => directResult, async (baseUrl) => {
+    const response = await post(baseUrl, JSON.stringify({ question: 'Qual o pokemon numero 3?' }));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), directResult);
+  });
+});
+
 test('rejects malformed JSON, invalid questions, and non-JSON content types before invoking the service', async () => {
   let calls = 0;
   await withServer(async () => { calls += 1; return success; }, async (baseUrl) => {

@@ -18,10 +18,19 @@ export const RetrievedEvidenceSchema = z.object({
   id: z.number().int().min(1).max(151),
   text: z.string().min(1),
   pokemonName: z.string().trim().min(1),
+  types: z.array(z.string().trim().min(1)).min(1).max(2),
+  total: z.number().int().nonnegative(),
   sources: z.array(AskSourceSchema).min(1),
   score: z.number().finite().optional(),
 }).strict();
 export type RetrievedEvidence = z.infer<typeof RetrievedEvidenceSchema>;
+
+export const PokemonLookupSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('id'), id: z.number().int().positive() }).strict(),
+  z.object({ kind: z.literal('name'), name: z.string().trim().min(1).max(100) }).strict(),
+  z.object({ kind: z.literal('type'), type: z.string().trim().min(1).max(20) }).strict(),
+]);
+export type PokemonLookup = z.infer<typeof PokemonLookupSchema>;
 
 export const AskResultSchema = z.object({
   answer: z.string().trim().min(1),

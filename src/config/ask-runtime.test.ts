@@ -9,6 +9,8 @@ const evidence: RetrievedEvidence = {
   id: 1,
   text: 'Bulbasaur is Grass and Poison type.',
   pokemonName: 'bulbasaur',
+  types: ['grass', 'poison'],
+  total: 318,
   sources: [{ pokemonId: 1, pokemonName: 'bulbasaur', url: 'https://bulbapedia.bulbagarden.net/wiki/Bulbasaur_(Pok%C3%A9mon)' }],
 };
 
@@ -46,6 +48,7 @@ test('composes local store, embedding, guardrail, and generator dependencies wit
       assert.equal(topK, 5);
       return [evidence];
     },
+    async lookup() { return [evidence]; },
   };
   const runtime = await createAskService({
     environment: { LANCEDB_COLLECTION_NAME: 'pokedex_vectors', OPENROUTER_API_KEY: 'runtime-secret' },

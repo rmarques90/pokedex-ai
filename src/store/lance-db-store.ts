@@ -6,6 +6,8 @@ import {
   RetrievedEvidenceSchema,
   VectorCollectionUnavailableError,
   RetrievalError,
+  PokemonLookupSchema,
+  type PokemonLookup,
   type RetrievedEvidence,
 } from '../domain/ask.js';
 import { EMBEDDING_DIMENSIONS } from '../constants.js';
@@ -22,6 +24,7 @@ export interface PokemonVectorStore {
   inspectCollection(collectionName: string): Promise<CollectionState>;
   replaceCollection(collectionName: string, rows: PokemonVectorRow[]): Promise<CollectionState>;
   searchByVector(collectionName: string, vector: number[], topK: number): Promise<RetrievedEvidence[]>;
+  lookup(collectionName: string, criteria: unknown): Promise<RetrievedEvidence[]>;
 }
 
 const SearchVectorSchema = z.array(z.number().finite()).length(EMBEDDING_DIMENSIONS);
@@ -53,23 +56,28 @@ export class LanceDbVectorStore implements PokemonVectorStore {
     try {
       const table = await this.connection.openTable(name);
       const rows = await table.vectorSearch(queryVector).limit(resultLimit).toArray();
-      return rows.map((rawRow) => {
-        const row = PokemonVectorRowSchema.parse(normalizeRow(rawRow as Record<string, unknown>));
-        const distance = (rawRow as Record<string, unknown>)._distance;
-        const sources = [row.descriptionSourceUrl, row.pokemonUrl, row.speciesUrl]
-          .filter((url, index, all) => all.indexOf(url) === index)
-          .map((url) => ({ pokemonId: row.id, pokemonName: row.name, url }));
-        return RetrievedEvidenceSchema.parse({
-          id: row.id,
-          text: row.text,
-          pokemonName: row.name,
-          sources,
-          ...(typeof distance === 'number' && Number.isFinite(distance) ? { score: distance } : {}),
-        });
-      });
+      return rows.map(toRetrievedEvidence);
     } catch (error) {
       if (error instanceof VectorCollectionUnavailableError || error instanceof RetrievalError) throw error;
       throw new RetrievalError('Pokémon vector search failed.', { cause: error });
+    }
+  }
+
+  async lookup(collectionName: string, criteriaInput: unknown): Promise<RetrievedEvidence[]> {
+    const name = CollectionNameSchema.parse(collectionName);
+    const criteria = PokemonLookupSchema.parse(criteriaInput);
+    const names = await this.connection.tableNames();
+    if (!names.includes(name)) throw new VectorCollectionUnavailableError();
+
+    try {
+      const table = await this.connection.openTable(name);
+      const rows = (await table.query().toArray())
+        .map((rawRow) => PokemonVectorRowSchema.parse(normalizeRow(rawRow as Record<string, unknown>)))
+        .filter((row) => matchesLookup(row, criteria));
+      return rows.map((row) => toRetrievedEvidence(row));
+    } catch (error) {
+      if (error instanceof VectorCollectionUnavailableError || error instanceof RetrievalError) throw error;
+      throw new RetrievalError('PokÃ©mon structured lookup failed.', { cause: error });
     }
   }
 
@@ -173,6 +181,30 @@ export class LanceDbVectorStore implements PokemonVectorStore {
     const actual = await table.countRows();
     if (actual !== expected) throw new LanceDbStoreError(`Collection ${collectionName} has ${actual} rows; expected ${expected}`);
   }
+}
+
+function matchesLookup(row: PokemonVectorRow, criteria: PokemonLookup): boolean {
+  if (criteria.kind === 'id') return row.id === criteria.id;
+  if (criteria.kind === 'name') return row.name.trim().toLowerCase() === criteria.name.trim().toLowerCase();
+  return row.types.some((type) => type.toLowerCase() === criteria.type.trim().toLowerCase());
+}
+
+function toRetrievedEvidence(rawRow: unknown): RetrievedEvidence {
+  const candidate = rawRow as Record<string, unknown>;
+  const row = PokemonVectorRowSchema.parse(normalizeRow(candidate));
+  const distance = candidate._distance;
+  const sources = [row.descriptionSourceUrl, row.pokemonUrl, row.speciesUrl]
+    .filter((url, index, all) => all.indexOf(url) === index)
+    .map((url) => ({ pokemonId: row.id, pokemonName: row.name, url }));
+  return RetrievedEvidenceSchema.parse({
+    id: row.id,
+    text: row.text,
+    pokemonName: row.name,
+    types: row.types,
+    total: row.total,
+    sources,
+    ...(typeof distance === 'number' && Number.isFinite(distance) ? { score: distance } : {}),
+  });
 }
 
 function normalizeRow(row: Record<string, unknown>): Record<string, unknown> {

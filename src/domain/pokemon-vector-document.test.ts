@@ -39,6 +39,9 @@ test('requires vector rows to contain finite vectors of exactly 4096 dimensions'
     vector: Array.from({ length: 4096 }, () => 0.25),
   };
   assert.equal(PokemonVectorRowSchema.safeParse(valid).success, true);
+  const parsedRow = PokemonVectorRowSchema.parse(valid);
+  assert.deepEqual(parsedRow.types, first.types);
+  assert.equal(parsedRow.total, first.total);
   assert.equal(PokemonVectorRowSchema.safeParse({ ...valid, vector: [Number.NaN] }).success, false);
   assert.equal(PokemonVectorRowSchema.safeParse({ ...valid, vector: [0.1, 0.2] }).success, false);
 });
