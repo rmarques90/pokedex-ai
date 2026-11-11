@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+import {
+  PokemonDatasetSchema,
+  PokemonRecordSchema,
+  PokemonVectorRowSchema,
+  CollectionNameSchema,
+} from './pokemon-vector-document.js';
+import { checkProtectedChanges } from '../scripts/pre-commit-guard.js';
+
+const datasetPath = new URL('../../store/data/pokemon.json', import.meta.url);
+
+test('validates the generated 151-record Pokemon dataset', async () => {
+  const dataset: unknown = JSON.parse(await readFile(datasetPath, 'utf8'));
+  assert.equal(PokemonDatasetSchema.safeParse(dataset).success, true);
+});
+
+test('rejects missing, malformed, duplicate, and out-of-range datasets', async () => {
+  const records: unknown = JSON.parse(await readFile(datasetPath, 'utf8'));
+  assert.ok(Array.isArray(records));
+  assert.equal(PokemonDatasetSchema.safeParse(records.slice(1)).success, false);
+  assert.equal(PokemonDatasetSchema.safeParse([...records.slice(0, 150), records[149]]).success, false);
+  assert.equal(PokemonRecordSchema.safeParse({ ...records[0], id: 152 }).success, false);
+  assert.equal(PokemonRecordSchema.safeParse({ ...records[0], stats: { hp: 1 } }).success, false);
+  assert.equal(PokemonRecordSchema.safeParse({ ...records[0], descriptionAttribution: 'Unknown' }).success, false);
+  assert.equal(PokemonDatasetSchema.safeParse('not-json-data').success, false);
+});
+
+test('requires vector rows to contain finite vectors of exactly 4096 dimensions', async () => {
+  const dataset: unknown = JSON.parse(await readFile(datasetPath, 'utf8'));
+  assert.ok(Array.isArray(dataset));
+  const first = dataset[0] as Record<string, unknown>;
+  const stats = first.stats as Record<string, number>;
+  const valid = {
+    ...first,
+    ...stats,
+    text: 'Bulbasaur vector text',
+    vector: Array.from({ length: 4096 }, () => 0.25),
+  };
+  assert.equal(PokemonVectorRowSchema.safeParse(valid).success, true);
+  assert.equal(PokemonVectorRowSchema.safeParse({ ...valid, vector: [Number.NaN] }).success, false);
+  assert.equal(PokemonVectorRowSchema.safeParse({ ...valid, vector: [0.1, 0.2] }).success, false);
+});
+
+test('rejects protected collection names without case sensitivity', () => {
+  assert.equal(CollectionNameSchema.safeParse('pokedex_vectors').success, true);
+  assert.equal(CollectionNameSchema.safeParse('SYSTEM').success, false);
+  assert.equal(CollectionNameSchema.safeParse('__pokedex_ai_stage_manual').success, false);
+  assert.equal(CollectionNameSchema.safeParse('../other-db').success, false);
+});
+
+test('pre-commit blocks safeguard edits without human review and staged tests', () => {
+  const change = ['src/domain/pokemon-vector-document.ts'];
+  assert.match(checkProtectedChanges(change, false) ?? '', /human review/);
+  assert.match(checkProtectedChanges([...change, 'src/domain/pokemon-vector-document.test.ts'], true) ?? '', /^$/);
+  assert.match(checkProtectedChanges(change, true) ?? '', /require a staged safeguard test/);
+});

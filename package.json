@@ -1,0 +1,27 @@
+{
+  "name": "pokedex-ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "cli": "tsx src/cli.ts",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "collect:data": "tsx src/scripts/collect-pokemon-data.ts",
+    "populate_db": "tsx src/scripts/populate-vector-database.ts",
+    "collect:populate-db": "tsx src/scripts/collect-and-populate-vector-database.ts",
+    "hooks:install": "git config core.hooksPath .githooks"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.41.0",
+    "@langchain/core": "^1.3.7",
+    "@langchain/openai": "^1.8.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

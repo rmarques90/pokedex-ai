@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+staged_paths=$(git diff --cached --name-only --diff-filter=ACMR) || exit 1
+printf '%s\n' "$staged_paths" | node --import tsx src/scripts/pre-commit-guard.ts
