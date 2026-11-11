@@ -8,6 +8,7 @@ import test from 'node:test';
 import { LanceDbVectorStore } from './lance-db-store.js';
 import { PokemonDatasetSchema, PokemonVectorRowSchema, type PokemonVectorRow } from '../domain/pokemon-vector-document.js';
 import { EMBEDDING_DIMENSIONS } from '../constants.js';
+import { RetrievalError, VectorCollectionUnavailableError } from '../domain/ask.js';
 
 const sourcePath = new URL('../../store/data/pokemon.json', import.meta.url);
 
@@ -101,4 +102,60 @@ test('refuses to guess how to recover stale staging or backup collections', asyn
   const store = new LanceDbVectorStore(connection);
   await assert.rejects(store.replaceCollection('pokedex_vectors', await rows('x')), /Recovery required/);
   assert.deepEqual(await connection.tableNames(), ['__pokedex_ai_stage_stale']);
+});
+
+test('searches only the requested collection, honors topK, and returns validated source metadata', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'pokedex-lance-search-test-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const connection = await connect(directory);
+  const store = new LanceDbVectorStore(connection);
+  await store.replaceCollection('pokedex_vectors', await rows('search'));
+
+  const found = await store.searchByVector('pokedex_vectors', Array.from({ length: EMBEDDING_DIMENSIONS }, () => 1 / 151), 5);
+  assert.equal(found.length, 5);
+  assert.equal(found[0]?.id, 1);
+  assert.equal(found[0]?.pokemonName, 'bulbasaur');
+  assert.equal(found[0]?.sources.some(({ url }) => url.includes('bulbapedia')), true);
+  assert.equal(found.every(({ sources }) => sources.length > 0), true);
+  await assert.rejects(
+    store.searchByVector('another_collection', Array.from({ length: EMBEDDING_DIMENSIONS }, () => 1 / 151), 5),
+    VectorCollectionUnavailableError,
+  );
+});
+
+test('rejects invalid search vectors and topK before querying LanceDB', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'pokedex-lance-search-test-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const connection = await connect(directory);
+  const store = new LanceDbVectorStore(connection);
+  await assert.rejects(store.searchByVector('pokedex_vectors', [1, 2], 5));
+  await assert.rejects(store.searchByVector('pokedex_vectors', Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0), 0));
+  assert.deepEqual(await connection.tableNames(), []);
+});
+
+test('returns an empty result for an existing empty collection and wraps search failures', async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), 'pokedex-lance-search-test-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const connection = await connect(directory);
+  const initialRows = await rows('search');
+  const populated = await connection.createTable('empty_collection', initialRows);
+  await connection.dropTable('empty_collection');
+  await connection.createEmptyTable('empty_collection', await populated.schema());
+  const store = new LanceDbVectorStore(connection);
+  assert.deepEqual(
+    await store.searchByVector('empty_collection', Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0), 5),
+    [],
+  );
+
+  const failingConnection = new Proxy(connection, {
+    get(target, property, receiver) {
+      if (property === 'openTable') return async () => { throw new Error('internal connection detail'); };
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as Connection;
+  await assert.rejects(
+    new LanceDbVectorStore(failingConnection).searchByVector('empty_collection', Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0), 5),
+    (error: unknown) => error instanceof RetrievalError && !error.message.includes('internal connection detail'),
+  );
 });

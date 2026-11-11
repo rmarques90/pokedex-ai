@@ -55,4 +55,8 @@ test('pre-commit blocks safeguard edits without human review and staged tests', 
   assert.match(checkProtectedChanges(change, false) ?? '', /human review/);
   assert.match(checkProtectedChanges([...change, 'src/domain/pokemon-vector-document.test.ts'], true) ?? '', /^$/);
   assert.match(checkProtectedChanges(change, true) ?? '', /require a staged safeguard test/);
+
+  const storeChange = ['src/store/lance-db-store.ts'];
+  assert.match(checkProtectedChanges(storeChange, false) ?? '', /human review/);
+  assert.match(checkProtectedChanges([...storeChange, 'src/domain/pokemon-vector-document.test.ts'], true) ?? '', /^$/);
 });

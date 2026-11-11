@@ -13,6 +13,7 @@ function dependencies(overrides: Partial<Parameters<typeof runPopulateCommand>[0
   const store: PokemonVectorStore = {
     async inspectCollection(name) { return { collectionExisted: false, databaseCollectionNames: [name] }; },
     async replaceCollection(name, rows) { return { collectionExisted: false, databaseCollectionNames: [name] }; },
+    async searchByVector() { return []; },
   };
   let connectionCount = 0;
   const embeddings: EmbeddingClient = { async embedDocuments(texts) { return texts.map(() => Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0.1)); } };

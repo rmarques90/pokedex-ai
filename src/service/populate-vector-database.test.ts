@@ -21,6 +21,7 @@ function fakeStore() {
       calls.push({ name, rows });
       return { collectionExisted: calls.length > 1, databaseCollectionNames: [name] };
     },
+    async searchByVector() { return []; },
   };
   return { calls, store };
 }

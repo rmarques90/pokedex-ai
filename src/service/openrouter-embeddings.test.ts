@@ -4,9 +4,11 @@ import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from '../constants.js';
 import {
   EMBEDDING_BATCH_SIZE,
   embedDocuments,
+  embedQuery,
   EmbeddingGenerationError,
   getOpenRouterEmbeddingOptions,
   type EmbeddingClient,
+  type QueryEmbeddingClient,
 } from './openrouter-embeddings.js';
 
 test('configures LangChain embeddings for OpenRouter and the selected model', () => {
@@ -54,4 +56,18 @@ test('wraps provider failures without putting credential data in its message', a
     assert.doesNotMatch(error.message, /test-key/);
     return true;
   });
+});
+
+test('embeds one query and validates its vector dimensions and values', async () => {
+  const expected = Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0.25);
+  let requested = '';
+  const queryClient: QueryEmbeddingClient = { async embedQuery(text) { requested = text; return expected; } };
+  const vector = await embedQuery(queryClient, 'Who is Bulbasaur?');
+  assert.equal(requested, 'Who is Bulbasaur?');
+  assert.deepEqual(vector, expected);
+
+  const invalid: QueryEmbeddingClient = { async embedQuery() { return [1, Number.NaN]; } };
+  await assert.rejects(embedQuery(invalid, 'invalid'), /4096 finite values/);
+  const failing: QueryEmbeddingClient = { async embedQuery() { throw new Error('secret'); } };
+  await assert.rejects(embedQuery(failing, 'failed'), /query embedding request failed/);
 });

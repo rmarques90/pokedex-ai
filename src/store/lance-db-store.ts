@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Connection } from '@lancedb/lancedb';
+import { z } from 'zod';
 import { CollectionNameSchema, PokemonVectorRowSchema, type PokemonVectorRow } from '../domain/pokemon-vector-document.js';
+import {
+  RetrievedEvidenceSchema,
+  VectorCollectionUnavailableError,
+  RetrievalError,
+  type RetrievedEvidence,
+} from '../domain/ask.js';
+import { EMBEDDING_DIMENSIONS } from '../constants.js';
 
 const STAGING_PREFIX = '__pokedex_ai_stage_';
 const BACKUP_PREFIX = '__pokedex_ai_backup_';
@@ -13,7 +21,11 @@ export interface CollectionState {
 export interface PokemonVectorStore {
   inspectCollection(collectionName: string): Promise<CollectionState>;
   replaceCollection(collectionName: string, rows: PokemonVectorRow[]): Promise<CollectionState>;
+  searchByVector(collectionName: string, vector: number[], topK: number): Promise<RetrievedEvidence[]>;
 }
+
+const SearchVectorSchema = z.array(z.number().finite()).length(EMBEDDING_DIMENSIONS);
+const TopKSchema = z.number().int().min(1).max(151);
 
 export class LanceDbStoreError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -29,6 +41,36 @@ export class LanceDbVectorStore implements PokemonVectorStore {
     const name = CollectionNameSchema.parse(collectionName);
     const databaseCollectionNames = await this.connection.tableNames();
     return { collectionExisted: databaseCollectionNames.includes(name), databaseCollectionNames };
+  }
+
+  async searchByVector(collectionName: string, vector: number[], topK: number): Promise<RetrievedEvidence[]> {
+    const name = CollectionNameSchema.parse(collectionName);
+    const queryVector = SearchVectorSchema.parse(vector);
+    const resultLimit = TopKSchema.parse(topK);
+    const names = await this.connection.tableNames();
+    if (!names.includes(name)) throw new VectorCollectionUnavailableError();
+
+    try {
+      const table = await this.connection.openTable(name);
+      const rows = await table.vectorSearch(queryVector).limit(resultLimit).toArray();
+      return rows.map((rawRow) => {
+        const row = PokemonVectorRowSchema.parse(normalizeRow(rawRow as Record<string, unknown>));
+        const distance = (rawRow as Record<string, unknown>)._distance;
+        const sources = [row.descriptionSourceUrl, row.pokemonUrl, row.speciesUrl]
+          .filter((url, index, all) => all.indexOf(url) === index)
+          .map((url) => ({ pokemonId: row.id, pokemonName: row.name, url }));
+        return RetrievedEvidenceSchema.parse({
+          id: row.id,
+          text: row.text,
+          pokemonName: row.name,
+          sources,
+          ...(typeof distance === 'number' && Number.isFinite(distance) ? { score: distance } : {}),
+        });
+      });
+    } catch (error) {
+      if (error instanceof VectorCollectionUnavailableError || error instanceof RetrievalError) throw error;
+      throw new RetrievalError('Pokémon vector search failed.', { cause: error });
+    }
   }
 
   async replaceCollection(collectionName: string, inputRows: PokemonVectorRow[]): Promise<CollectionState> {

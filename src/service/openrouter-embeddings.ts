@@ -1,11 +1,11 @@
 import type { EmbeddingsInterface } from '@langchain/core/embeddings';
 import { OpenAIEmbeddings, type OpenAIEmbeddingsParams } from '@langchain/openai';
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from '../constants.js';
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, OPENROUTER_BASE_URL } from '../constants.js';
 
-const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1';
 export const EMBEDDING_BATCH_SIZE = 32;
 
 export type EmbeddingClient = Pick<EmbeddingsInterface, 'embedDocuments'>;
+export type QueryEmbeddingClient = Pick<EmbeddingsInterface, 'embedQuery'>;
 export type OpenRouterEmbeddingOptions = Partial<OpenAIEmbeddingsParams> & {
   apiKey: string;
   configuration: { baseURL: string };
@@ -25,11 +25,11 @@ export function getOpenRouterEmbeddingOptions(apiKey: string): OpenRouterEmbeddi
     dimensions: EMBEDDING_DIMENSIONS,
     batchSize: EMBEDDING_BATCH_SIZE,
     maxRetries: 2,
-    configuration: { baseURL: OPENROUTER_EMBEDDINGS_URL },
+    configuration: { baseURL: OPENROUTER_BASE_URL },
   };
 }
 
-export function createOpenRouterEmbeddings(apiKey: string): EmbeddingClient {
+export function createOpenRouterEmbeddings(apiKey: string): EmbeddingClient & QueryEmbeddingClient {
   return new OpenAIEmbeddings(getOpenRouterEmbeddingOptions(apiKey));
 }
 
@@ -53,4 +53,17 @@ export async function embedDocuments(
     }
   });
   return vectors;
+}
+
+export async function embedQuery(client: QueryEmbeddingClient, text: string): Promise<number[]> {
+  let vector: number[];
+  try {
+    vector = await client.embedQuery(text);
+  } catch (error) {
+    throw new EmbeddingGenerationError('OpenRouter query embedding request failed', { cause: error });
+  }
+  if (vector.length !== EMBEDDING_DIMENSIONS || vector.some((value) => !Number.isFinite(value))) {
+    throw new EmbeddingGenerationError(`Query embedding must contain ${EMBEDDING_DIMENSIONS} finite values`);
+  }
+  return vector;
 }
