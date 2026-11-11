@@ -51,12 +51,18 @@ function getSafeProviderFailureDetails(error: unknown): string {
   const status = [candidate.status, candidate.statusCode].find(
     (value): value is number => typeof value === 'number' && Number.isInteger(value),
   );
-  const code = typeof candidate.code === 'string' && /^[A-Z0-9_-]{1,40}$/i.test(candidate.code)
+  const code = typeof candidate.code === 'string' && isSafeProviderErrorCode(candidate.code)
     ? candidate.code
     : undefined;
   const details = [status === undefined ? undefined : `HTTP ${status}`, code === undefined ? undefined : `code ${code}`]
     .filter((value): value is string => value !== undefined);
   return details.length === 0 ? '' : ` (${details.join(', ')})`;
+}
+
+function isSafeProviderErrorCode(code: string): boolean {
+  return code.length <= 40
+    && /^[A-Z][A-Z0-9]*(?:[_-][A-Z0-9]+)+$/i.test(code)
+    && !/^(?:sk|token|secret|bearer)(?:[_-]|$)/i.test(code);
 }
 
 export const ANSWER_SYSTEM_PROMPT = [

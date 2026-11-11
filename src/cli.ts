@@ -1,8 +1,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ZodError } from 'zod';
 import { createAskService, loadLocalEnvironment, type AskService } from './config/ask-runtime.js';
-import { AskDomainError, AskQuestionSchema, type AskResult } from './domain/ask.js';
+import { AskQuestionSchema, type AskResult } from './domain/ask.js';
 
 export interface CliIo {
   writeOutput(message: string): void;
@@ -45,9 +44,46 @@ export async function runCli(args: string[], dependencies: CliDependencies, io: 
 }
 
 export function toCliErrorMessage(error: unknown): string {
-  if (error instanceof ZodError) return 'The question or result was invalid.';
-  if (error instanceof AskDomainError) return error.message;
-  return 'The ask command failed. Check local configuration and try again.';
+  const diagnostics: string[] = [];
+  const seen = new Set<Error>();
+  let current: unknown = error;
+  let depth = 0;
+
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    const category = current.name || current.constructor.name || 'Error';
+    const stack = current.stack ?? `${category}: ${current.message}`;
+    diagnostics.push([
+      depth === 0 ? `Error category: ${category}` : `Caused by (${depth}): ${category}`,
+      `Message: ${current.message || '(no message)'}`,
+      `Stack trace:\n${stack}`,
+    ].join('\n'));
+    current = current.cause;
+    depth += 1;
+  }
+
+  if (diagnostics.length === 0) {
+    const message = typeof error === 'string' ? error : 'A non-Error value was thrown.';
+    diagnostics.push(`Error category: ${typeof error}\nMessage: ${message}\nStack trace: unavailable`);
+  } else if (current !== undefined) {
+    const detail = typeof current === 'string' || typeof current === 'number' || typeof current === 'boolean'
+      ? String(current)
+      : current instanceof Error && seen.has(current)
+        ? 'cause cycle detected'
+        : `non-Error cause (${typeof current})`;
+    diagnostics.push(`Caused by: ${detail}`);
+  }
+
+  return redactDiagnosticSecrets(diagnostics.join('\n\n'));
+}
+
+export function redactDiagnosticSecrets(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk-or-v1-|sk-proj-|sk-)\w[\w-]{12,}\b/gi, '[REDACTED_API_KEY]')
+    .replace(/([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)=)[^&#\s]+/gi, '$1[REDACTED]')
+    .replace(/(['"]?\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|authorization|credential)\b['"]?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1[REDACTED]')
+    .replace(/(\b(?:token|secret|credential))\s+[A-Za-z0-9._~+/-]{12,}\b/gi, '$1 [REDACTED]');
 }
 
 async function main(): Promise<void> {

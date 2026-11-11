@@ -46,3 +46,29 @@ test('validates structured model output and redacts provider failures', async ()
   });
   await assert.rejects(invokeStructuredAnswer(async () => ({ answer: 'Unsupported', abstained: false, usedPokemonIds: [] })), ModelGenerationError);
 });
+
+test('preserves the provider cause and safe diagnostics while excluding unsafe error codes', async () => {
+  const providerSecret = `sk-or-v1-${'b'.repeat(48)}`;
+  const providerFailure = Object.assign(new Error(`Provider response included ${providerSecret}`), {
+    status: 502,
+    code: 'upstream_timeout',
+  });
+  await assert.rejects(invokeStructuredAnswer(async () => { throw providerFailure; }), (error: unknown) => {
+    assert.ok(error instanceof ModelGenerationError);
+    assert.match(error.message, /HTTP 502, code upstream_timeout/);
+    assert.doesNotMatch(error.message, new RegExp(providerSecret));
+    assert.equal(error.cause, providerFailure);
+    return true;
+  });
+
+  const unsafeCodeFailure = Object.assign(new Error('Provider rejected the request.'), {
+    status: 401,
+    code: providerSecret,
+  });
+  await assert.rejects(invokeStructuredAnswer(async () => { throw unsafeCodeFailure; }), (error: unknown) => {
+    assert.ok(error instanceof ModelGenerationError);
+    assert.match(error.message, /HTTP 401/);
+    assert.doesNotMatch(error.message, new RegExp(providerSecret));
+    return true;
+  });
+});

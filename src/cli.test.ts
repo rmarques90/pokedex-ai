@@ -59,14 +59,44 @@ test('rejects a missing or empty question before calling the service', async () 
   assert.equal(captured.stderr.length, 3);
 });
 
-test('reports domain errors safely and hides unexpected details', async () => {
-  const domainOutput = output();
-  assert.equal(await runCli(['ask', 'Question'], { async ask() { throw new ModelGenerationError(); } }, domainOutput.io), 1);
-  assert.match(domainOutput.stderr[0] ?? '', /Answer generation failed/);
+test('prints categorized errors and their complete stack traces to stderr', async () => {
+  const captured = output();
+  const failure = new ModelGenerationError('OpenRouter answer generation failed.');
+  const exitCode = await runCli(['ask', 'Question'], { async ask() { throw failure; } }, captured.io);
+  const diagnostic = captured.stderr.join('\n');
+  assert.equal(exitCode, 1);
+  assert.match(diagnostic, /Error category: ModelGenerationError/);
+  assert.match(diagnostic, /Message: OpenRouter answer generation failed/);
+  assert.match(diagnostic, /Stack trace:/);
+  assert.ok(diagnostic.includes(failure.stack ?? ''));
+  assert.deepEqual(captured.stdout, []);
+});
 
-  const unexpectedOutput = output();
-  assert.equal(await runCli(['ask', 'Question'], { async ask() { throw new Error('private token secret'); } }, unexpectedOutput.io), 1);
-  assert.doesNotMatch(unexpectedOutput.stderr.join('\n'), /private token secret/);
+test('prints nested causes and redacts credentials from messages and stack traces', async () => {
+  const captured = output();
+  const apiKey = `sk-or-v1-${'a'.repeat(48)}`;
+  const cause = new Error(`Provider response contained api_key=${apiKey}; password=${apiKey}; https://service.test/?access_token=${apiKey}`);
+  const failure = new ModelGenerationError(`OpenRouter answer generation failed (HTTP 401, code invalid_api_key) with Bearer ${apiKey}`, { cause });
+  assert.equal(await runCli(['ask', 'Question'], { async ask() { throw failure; } }, captured.io), 1);
+  const diagnostic = captured.stderr.join('\n');
+  assert.match(diagnostic, /Caused by \(1\): Error/);
+  assert.match(diagnostic, /HTTP 401, code invalid_api_key/);
+  assert.match(diagnostic, /Provider response contained api_key=\[REDACTED\]/);
+  assert.match(diagnostic, /password=\[REDACTED\]/);
+  assert.match(diagnostic, /access_token=\[REDACTED\]/);
+  assert.match(diagnostic, /Bearer \[REDACTED\]/);
+  assert.doesNotMatch(diagnostic, new RegExp(apiKey));
+  assert.match(diagnostic, /Stack trace:/);
+});
+
+test('reports unexpected errors instead of hiding their diagnostic message', async () => {
+  const captured = output();
+  const exitCode = await runCli(['ask', 'Question'], { async ask() { throw new Error('private token details are unavailable'); } }, captured.io);
+  const diagnostic = captured.stderr.join('\n');
+  assert.equal(exitCode, 1);
+  assert.match(diagnostic, /Error category: Error/);
+  assert.match(diagnostic, /Message: private token details are unavailable/);
+  assert.match(diagnostic, /Stack trace:/);
 });
 
 test('keeps the npm CLI entry configured for positional ask arguments', async () => {
