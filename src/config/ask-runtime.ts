@@ -5,6 +5,8 @@ import {
 } from '../domain/ask.js';
 import { createOpenRouterAnswerGenerator, type PokemonAnswerGenerator } from '../service/openrouter-chat-model.js';
 import { answerQuestion, type AnswerQuestionDependencies } from '../service/answer-question.js';
+import { streamAnswerQuestion } from '../service/answer-question.js';
+import type { AskStreamUpdate } from '../domain/ask-stream.js';
 import { createOpenRouterPromptSafetyClassifier, type PromptSafetyClassifier } from '../service/openrouter-prompt-safety.js';
 import {
   createOpenRouterEmbeddings,
@@ -25,6 +27,7 @@ export interface AskServiceRuntimeOptions {
 
 export interface AskService {
   ask(question: unknown): Promise<AskResult>;
+  askStream?(question: unknown, signal: AbortSignal, emit: (update: AskStreamUpdate) => void): Promise<AskResult>;
 }
 
 export function readAskRuntimeConfig(environment: NodeJS.ProcessEnv) {
@@ -51,7 +54,10 @@ export async function createAskService(options: AskServiceRuntimeOptions): Promi
     generator,
     guardrail,
   };
-  return { ask: (question) => answerQuestion(question, dependencies) };
+  return {
+    ask: (question) => answerQuestion(question, dependencies),
+    askStream: (question, signal, emit) => streamAnswerQuestion(question, dependencies, signal, emit),
+  };
 }
 
 export function loadLocalEnvironment(): void {

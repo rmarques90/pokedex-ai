@@ -1,21 +1,26 @@
-import { useState, type FormEvent } from 'react';
-import { askPokemon } from './api-client.js';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { askPokemonStream, type AskStreamOptions } from './api-client.js';
 import type { AskResult } from '../domain/ask.js';
 import { readLanguagePreference, saveLanguagePreference, UI_COPY, type Language } from './i18n.js';
 
-export type AskAction = (question: string) => Promise<AskResult>;
+export type AskAction = (question: string, options?: AskStreamOptions) => Promise<AskResult>;
 
-export function App({ ask = askPokemon }: { ask?: AskAction }) {
+export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
   const [language, setLanguage] = useState<Language>(() => readLanguagePreference());
   const [question, setQuestion] = useState('');
   const [submittedQuestion, setSubmittedQuestion] = useState('');
   const [result, setResult] = useState<AskResult | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [streamingAnswer, setStreamingAnswer] = useState('');
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const activeRequest = useRef<AbortController | null>(null);
   const copy = UI_COPY[language];
   const suggestions = language === 'pt'
     ? ['Quais tipos são fortes contra fogo?', 'Qual é o Pokémon número 3?', 'Conte uma curiosidade sobre Charmander.']
     : ['Which types are strong against Fire?', 'Which Pokémon is number 3?', 'Tell me a fact about Charmander.'];
+
+  useEffect(() => () => activeRequest.current?.abort(), []);
 
   function changeLanguage(next: Language) {
     setLanguage(next);
@@ -30,17 +35,43 @@ export function App({ ask = askPokemon }: { ask?: AskAction }) {
     setSubmittedQuestion(normalized);
     setResult(null);
     setError(false);
+    setStreamingAnswer('');
+    setRetryAttempt(0);
     setLoading(true);
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
     try {
-      setResult(await ask(normalized));
+      const answer = await ask(normalized, {
+        signal: controller.signal,
+        onDelta: (text) => { if (activeRequest.current === controller) setStreamingAnswer((current) => current + text); },
+        onReplace: (text) => { if (activeRequest.current === controller) setStreamingAnswer(text); },
+        onRetry: (attempt) => { if (activeRequest.current === controller) setRetryAttempt(attempt); },
+      });
+      if (activeRequest.current === controller) setResult(answer);
     } catch {
-      setError(true);
+      if (!controller.signal.aborted && activeRequest.current === controller) setError(true);
     } finally {
-      setLoading(false);
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setLoading(false);
+        setRetryAttempt(0);
+        setStreamingAnswer('');
+      }
     }
   }
 
+  function cancel() {
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    setLoading(false);
+    setStreamingAnswer('');
+    setRetryAttempt(0);
+    setError(false);
+  }
+
   function reset() {
+    cancel();
     setQuestion('');
     setSubmittedQuestion('');
     setResult(null);
@@ -76,9 +107,10 @@ export function App({ ask = askPokemon }: { ask?: AskAction }) {
             <div className="input-row"><textarea id="question-input" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={copy.questionPlaceholder} rows={2} disabled={loading} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} /><button type="submit" disabled={loading || !question.trim()}>{loading ? <span className="spinner"/> : <span>✦</span>}{copy.ask}</button></div>
             <div className="form-hint"><span aria-hidden="true">{String.fromCodePoint(0x21b5)}</span> {copy.keyboardHint}</div>
           </form>
-          {loading && <div className="state-card" role="status"><span className="spinner dark"/>{copy.loading}</div>}
+          {loading && <div className="state-card" role="status"><span className="spinner dark"/>{retryAttempt > 0 ? copy.retrying.replace('{attempt}', String(retryAttempt)) : copy.loading}<button className="cancel-button" type="button" onClick={cancel}>{copy.cancel}</button></div>}
+          {loading && streamingAnswer.length > 0 && <section className="answer-card stream-preview" aria-live="polite"><div className="answer-top"><div className="answer-icon">âœ¦</div><div><span className="answer-brand">{copy.answerLabel}</span><p className="asked-question">{submittedQuestion}</p></div></div><div className="answer-body"><p>{streamingAnswer}</p></div></section>}
           {error && <div className="state-card error-card" role="alert"><span>!</span><div><strong>{copy.requestError}</strong><button onClick={() => void submit()}>{copy.retry}</button></div></div>}
-          {result && <section className="answer-card" aria-live="polite"><div className="answer-top"><div className="answer-icon">✦</div><div><span className="answer-brand">{copy.answerLabel}</span><p className="asked-question">{submittedQuestion}</p></div><button className="reset-button" onClick={reset} aria-label={copy.newQuestion}>↻</button></div><div className="answer-body">{result.abstained && <div className="evidence-note">ⓘ {copy.insufficientEvidence}</div>}<p>{result.answer}</p></div>{result.sources.length > 0 && <div className="sources"><strong>{copy.sourcesLabel}</strong><ul>{result.sources.map((source) => <li key={`${source.pokemonId}-${source.url}`}><a href={source.url} target="_blank" rel="noreferrer"><span className="source-id">#{String(source.pokemonId).padStart(3, '0')}</span>{source.pokemonName}<span className="source-host">{getSourceIdentity(source.url)}</span><span className="external-icon">{String.fromCodePoint(0x2197)}</span></a></li>)}</ul></div>}<footer className="answer-footer">{copy.footerNote}<span>✦</span></footer></section>}
+          {result && <section className="answer-card" aria-live="polite"><div className="answer-top"><div className="answer-icon">✦</div><div><span className="answer-brand">{copy.answerLabel}</span><p className="asked-question">{submittedQuestion}</p></div><button className="reset-button" onClick={reset} aria-label={copy.newQuestion}>↻</button></div><div className="answer-body">{result.abstained && <div className="evidence-note">ⓘ {copy.insufficientEvidence}</div>}{!result.abstained && result.sources.length === 0 && <div className="evidence-note">{copy.generalKnowledge}</div>}<p>{result.answer}</p></div>{result.sources.length > 0 && <div className="sources"><strong>{copy.sourcesLabel}</strong><ul>{result.sources.map((source) => <li key={`${source.pokemonId}-${source.url}`}><a href={source.url} target="_blank" rel="noreferrer"><span className="source-id">#{String(source.pokemonId).padStart(3, '0')}</span>{source.pokemonName}<span className="source-host">{getSourceIdentity(source.url)}</span><span className="external-icon">{String.fromCodePoint(0x2197)}</span></a></li>)}</ul></div>}<footer className="answer-footer">{copy.footerNote}<span>✦</span></footer></section>}
           <footer className="page-footer"><span>Pokédex AI <b>·</b> {language === 'pt' ? 'Feito para curiosos' : 'Made for curious trainers'}</span><span>✦</span></footer>
         </div>
       </main>

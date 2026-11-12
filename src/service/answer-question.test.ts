@@ -12,7 +12,7 @@ import type { PokemonVectorStore } from '../store/lance-db-store.js';
 import type { QueryEmbeddingClient } from './openrouter-embeddings.js';
 import type { PokemonAnswerGenerator } from './openrouter-chat-model.js';
 import type { PromptInjectionGuardrail } from './prompt-injection-guardrail.js';
-import { answerQuestion, INITIAL_RETRIEVAL_TOP_K, INSUFFICIENT_EVIDENCE_ANSWER } from './answer-question.js';
+import { answerQuestion, INITIAL_RETRIEVAL_TOP_K, streamAnswerQuestion } from './answer-question.js';
 
 const bulbasaur: RetrievedEvidence = {
   id: 1,
@@ -86,8 +86,12 @@ function dependencies(overrides: {
       calls.push('model');
       modelCalls += 1;
       assert.equal(input.question, questionText);
-      assert.deepEqual(input.evidence, overrides.lookupEvidence ?? overrides.evidence ?? [bulbasaur, pikachu]);
+      if (input.mode === 'general') assert.deepEqual(input.evidence, []);
+      else assert.deepEqual(input.evidence, overrides.lookupEvidence ?? overrides.evidence ?? [bulbasaur, pikachu]);
       if (overrides.failModel) throw new Error('provider key secret');
+      if (input.mode === 'general' && !overrides.generated?.abstained) {
+        return { answer: 'Pikachu evolves into Raichu.', abstained: false, usedPokemonIds: [] };
+      }
       return overrides.generated ?? {
         answer: 'Bulbasaur is a Grass and Poison Pokémon.',
         abstained: false,
@@ -130,29 +134,86 @@ test('embeds, retrieves five records, guards the question and context, and cites
   });
 });
 
-test('abstains without calling the model when the collection returns no evidence', async () => {
+test('uses general Pokemon knowledge with no evidence when the collection returns no matches', async () => {
   const fixture = dependencies({ evidence: [] });
   const result = await answerQuestion('Why does the seed grow?', fixture.dependencies);
-  assert.deepEqual(result, { answer: INSUFFICIENT_EVIDENCE_ANSWER, abstained: true, sources: [] });
-  assert.equal(fixture.modelCalls, 0);
+  assert.deepEqual(result, { answer: 'Pikachu evolves into Raichu.', abstained: false, sources: [] });
+  assert.equal(fixture.modelCalls, 1);
 });
 
-test('localizes the fixed insufficient-evidence answer to the Portuguese question language', async () => {
-  const question = 'Qual informação existe sobre esse Pokémon?';
+test('streams grounded deltas and completes with validated citations', async () => {
+  const fixture = dependencies();
+  fixture.dependencies.generator.stream = async (_input, emit) => {
+    emit({ type: 'delta', text: 'Bulbasaur is ' });
+    emit({ type: 'delta', text: 'Grass and Poison.' });
+    return { answer: 'Bulbasaur is Grass and Poison.', abstained: false, usedPokemonIds: [1] };
+  };
+  const updates: unknown[] = [];
+  const result = await streamAnswerQuestion('Why does the seed grow?', fixture.dependencies, new AbortController().signal, (event) => updates.push(event));
+  assert.deepEqual(updates, [
+    { type: 'delta', text: 'Bulbasaur is ' },
+    { type: 'delta', text: 'Grass and Poison.' },
+  ]);
+  assert.deepEqual(result.sources, bulbasaur.sources);
+});
+
+test('replaces an abstained grounded draft before streaming general knowledge', async () => {
+  const fixture = dependencies();
+  let modelCalls = 0;
+  fixture.dependencies.generator.stream = async (input, emit) => {
+    modelCalls += 1;
+    if (input.mode === 'retrieved') {
+      emit({ type: 'delta', text: 'Insufficient indexed data.' });
+      return { answer: 'Insufficient indexed data.', abstained: true, usedPokemonIds: [] };
+    }
+    emit({ type: 'delta', text: 'Pikachu evolves into Raichu.' });
+    return { answer: 'Pikachu evolves into Raichu.', abstained: false, usedPokemonIds: [] };
+  };
+  const updates: unknown[] = [];
+  const result = await streamAnswerQuestion('Why does the seed grow?', fixture.dependencies, new AbortController().signal, (event) => updates.push(event));
+  assert.deepEqual(updates, [
+    { type: 'delta', text: 'Insufficient indexed data.' },
+    { type: 'replace', reason: 'fallback', text: '' },
+    { type: 'delta', text: 'Pikachu evolves into Raichu.' },
+  ]);
+  assert.equal(modelCalls, 2);
+  assert.deepEqual(result.sources, []);
+});
+
+test('streams general knowledge directly when retrieval returns no evidence', async () => {
+  const fixture = dependencies({ evidence: [] });
+  const modes: string[] = [];
+  fixture.dependencies.generator.stream = async (input, emit) => {
+    modes.push(input.mode);
+    emit({ type: 'delta', text: 'Pikachu evolves into Raichu.' });
+    return { answer: 'Pikachu evolves into Raichu.', abstained: false, usedPokemonIds: [] };
+  };
+  const updates: unknown[] = [];
+  const result = await streamAnswerQuestion('Why does the seed grow?', fixture.dependencies, new AbortController().signal, (event) => updates.push(event));
+  assert.deepEqual(modes, ['general']);
+  assert.deepEqual(result.sources, []);
+  assert.deepEqual(updates, [{ type: 'delta', text: 'Pikachu evolves into Raichu.' }]);
+});
+
+test('stops before retrieval when the stream is cancelled', async () => {
+  const fixture = dependencies();
+  const controller = new AbortController();
+  controller.abort(new Error('cancelled'));
+  await assert.rejects(streamAnswerQuestion('Why does the seed grow?', fixture.dependencies, controller.signal, () => undefined));
+  assert.deepEqual(fixture.calls, ['guardrail:question']);
+});
+test('uses the general-knowledge pass for a Portuguese question with no indexed evidence', async () => {
+  const question = 'Qual informacao existe sobre esse Pokemon?';
   const fixture = dependencies({ question, evidence: [] });
   const result = await answerQuestion(question, fixture.dependencies);
-  assert.deepEqual(result, {
-    answer: 'Os dados indexados não contêm informação suficiente para responder a esta pergunta.',
-    abstained: true,
-    sources: [],
-  });
-  assert.equal(fixture.modelCalls, 0);
+  assert.deepEqual(result, { answer: 'Pikachu evolves into Raichu.', abstained: false, sources: [] });
+  assert.equal(fixture.modelCalls, 1);
 });
-
 test('returns a model abstention without citations', async () => {
   const fixture = dependencies({ generated: { answer: 'The indexed data is insufficient.', abstained: true, usedPokemonIds: [] } });
   const result = await answerQuestion('Why does the seed grow?', fixture.dependencies);
   assert.deepEqual(result, { answer: 'The indexed data is insufficient.', abstained: true, sources: [] });
+  assert.equal(fixture.modelCalls, 2);
 });
 
 test('fails closed before model invocation when the guardrail rejects input or evidence', async () => {
@@ -211,7 +272,7 @@ test('uses exact indexed lookup for National Pokedex number 3 even when vector s
   assert.deepEqual(result.sources, venusaur.sources);
 });
 
-test('uses exact canonical-name lookup and reports a missing direct record clearly', async () => {
+test('uses exact canonical-name lookup and falls back to general knowledge for a missing record', async () => {
   const nameFixture = dependencies({
     question: 'What types does Bulbasaur have?',
     lookupEvidence: [bulbasaur],
@@ -222,15 +283,17 @@ test('uses exact canonical-name lookup and reports a missing direct record clear
 
   const missingFixture = dependencies({ question: 'What Pokémon is #999?' });
   const missingResult = await answerQuestion('What Pokémon is #999?', missingFixture.dependencies);
-  assert.equal(missingResult.abstained, true);
-  assert.match(missingResult.answer, /No matching Pokémon record/);
-  assert.deepEqual(missingFixture.calls, ['guardrail:question', 'lookup']);
-  assert.equal(missingFixture.modelCalls, 0);
+  assert.equal(missingResult.abstained, false);
+  assert.equal(missingResult.answer, 'Pikachu evolves into Raichu.');
+  assert.deepEqual(missingResult.sources, []);
+  assert.deepEqual(missingFixture.calls, ['guardrail:question', 'lookup', 'guardrail:evidence', 'model']);
+  assert.equal(missingFixture.modelCalls, 1);
 
   const missingNameFixture = dependencies({ question: 'Who is Missingno?' });
   const missingNameResult = await answerQuestion('Who is Missingno?', missingNameFixture.dependencies);
-  assert.equal(missingNameResult.abstained, true);
-  assert.match(missingNameResult.answer, /No matching Pokémon record/);
+  assert.equal(missingNameResult.abstained, false);
+  assert.equal(missingNameResult.answer, 'Pikachu evolves into Raichu.');
+  assert.deepEqual(missingNameResult.sources, []);
   assert.deepEqual(missingNameFixture.lookups, [{ kind: 'name', name: 'Missingno' }]);
 });
 

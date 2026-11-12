@@ -47,6 +47,19 @@ test('validates structured model output and redacts provider failures', async ()
   await assert.rejects(invokeStructuredAnswer(async () => ({ answer: 'Unsupported', abstained: false, usedPokemonIds: [] })), ModelGenerationError);
 });
 
+test('enforces evidence IDs according to the selected answer mode', async () => {
+  const general = await invokeStructuredAnswer(async () => ({
+    answer: 'Pikachu evolves into Raichu.', abstained: false, usedPokemonIds: [],
+  }), 'general');
+  assert.deepEqual(general.usedPokemonIds, []);
+  await assert.rejects(invokeStructuredAnswer(async () => ({
+    answer: 'Pikachu evolves into Raichu.', abstained: false, usedPokemonIds: [25],
+  }), 'general'), ModelGenerationError);
+  await assert.rejects(invokeStructuredAnswer(async () => ({
+    answer: 'Unsupported.', abstained: false, usedPokemonIds: [],
+  }), 'retrieved'), ModelGenerationError);
+});
+
 test('preserves the provider cause and safe diagnostics while excluding unsafe error codes', async () => {
   const providerSecret = `sk-or-v1-${'b'.repeat(48)}`;
   const providerFailure = Object.assign(new Error(`Provider response included ${providerSecret}`), {

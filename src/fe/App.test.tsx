@@ -99,6 +99,24 @@ test('shows a loading status and prevents duplicate submits until the request fi
   await screen.findByText(answer.answer);
 });
 
+test('renders streamed text immediately and cancels the active request', async () => {
+  let receivedSignal: AbortSignal | undefined;
+  let finish!: (value: typeof answer) => void;
+  render(<App ask={(_question, options) => {
+    receivedSignal = options?.signal;
+    options?.onDelta?.('Bulbasaur is ');
+    return new Promise((resolve) => { finish = resolve; });
+  }} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Who is Bulbasaur?' } });
+  fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
+  assert.ok(screen.getByText(/Bulbasaur is/));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+  assert.equal(receivedSignal?.aborted, true);
+  assert.equal(screen.queryByText(/Bulbasaur is/), null);
+  assert.equal(screen.queryByRole('alert'), null);
+  finish(answer);
+});
+
 test('shows an error and allows retry after request failure', async () => {
   let calls = 0;
   render(<App ask={async () => { calls += 1; if (calls === 1) throw new Error('network'); return answer; }} />);
@@ -120,6 +138,15 @@ test('renders grounded answer and safe source links', async () => {
   assert.equal(source.getAttribute('href'), answer.sources[0].url);
   assert.equal(source.getAttribute('target'), '_blank');
   assert.equal(source.getAttribute('rel'), 'noreferrer');
+});
+
+test('labels answers that have no indexed sources as general model knowledge', async () => {
+  render(<App ask={async () => ({ answer: 'Pikachu evolves into Raichu.', abstained: false, sources: [] })} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Who does Pikachu evolve into?' } });
+  fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
+  await screen.findByText('Pikachu evolves into Raichu.');
+  assert.ok(screen.getByText(/conhecimento geral do modelo/));
+  assert.equal(document.querySelector('.sources'), null);
 });
 
 test('labels an abstained response as insufficient evidence', async () => {

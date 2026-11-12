@@ -17,7 +17,7 @@ export async function startApiServer(options: ApiServerOptions = {}): Promise<Se
   const service = options.service ?? await createAskService({ environment: options.environment ?? process.env });
   return listenAskHttpServer(service.ask, options.port ?? 3000, options.host ?? '127.0.0.1', {
     allowedOrigins: options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS,
-  });
+  }, service.askStream);
 }
 
 async function main(): Promise<void> {

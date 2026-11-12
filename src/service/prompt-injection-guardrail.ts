@@ -14,7 +14,7 @@ const GuardrailInputSchema = z.object({
 
 export type GuardrailInput = z.infer<typeof GuardrailInputSchema>;
 export interface PromptInjectionGuardrail {
-  checkQuestion(question: unknown): Promise<string>;
+  checkQuestion(question: unknown, signal?: AbortSignal): Promise<string>;
   checkEvidence(evidence: unknown): RetrievedEvidence[];
 }
 
@@ -48,10 +48,10 @@ export function validateGuardrailInput(input: unknown): GuardrailInput {
 
 export function createPromptInjectionGuardrail(classifier: PromptSafetyClassifier): PromptInjectionGuardrail {
   return {
-    async checkQuestion(input) {
+    async checkQuestion(input, signal) {
       const question = AskQuestionSchema.parse(input);
       validateQuestionPattern(question);
-      const verdict = await classifier.assess(question);
+      const verdict = await classifier.assess(question, signal);
       if (!verdict.safe) throw new PromptGuardrailError();
       return question;
     },

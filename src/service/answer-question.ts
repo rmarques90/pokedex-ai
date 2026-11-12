@@ -11,12 +11,11 @@ import {
 } from '../domain/ask.js';
 import type { PokemonVectorStore } from '../store/lance-db-store.js';
 import { embedQuery, type QueryEmbeddingClient } from './openrouter-embeddings.js';
-import type { PokemonAnswerGenerator } from './openrouter-chat-model.js';
+import type { PokemonAnswerGenerator, PokemonAnswerMode } from './openrouter-chat-model.js';
 import type { PromptInjectionGuardrail } from './prompt-injection-guardrail.js';
+import type { AskStreamUpdate } from '../domain/ask-stream.js';
 
 export const INITIAL_RETRIEVAL_TOP_K = 5;
-const INSUFFICIENT_EVIDENCE_ANSWER_PT = 'Os dados indexados não contêm informação suficiente para responder a esta pergunta.';
-export const INSUFFICIENT_EVIDENCE_ANSWER = 'The indexed Pokémon data does not contain enough information to answer this question.';
 
 export interface AnswerQuestionDependencies {
   collectionName: string;
@@ -57,31 +56,40 @@ export async function answerQuestion(questionInput: unknown, dependencies: Answe
   }
   }
 
-  if (retrieved.length === 0) {
-    if (intent?.lookup.kind === 'id' || intent?.lookup.kind === 'name') {
-      const answer = isPortuguese(question)
-        ? 'Não há um registro correspondente na base indexada.'
-        : 'No matching Pokémon record is available in the indexed data.';
-      return AskResultSchema.parse({ answer, abstained: true, sources: [] });
-    }
-    return AskResultSchema.parse({
-      answer: isPortuguese(question) ? INSUFFICIENT_EVIDENCE_ANSWER_PT : INSUFFICIENT_EVIDENCE_ANSWER,
-      abstained: true,
-      sources: [],
-    });
-  }
-
   const guardedEvidence = dependencies.guardrail.checkEvidence(retrieved);
+  const generate = async (mode: PokemonAnswerMode, evidence: RetrievedEvidence[]): Promise<GeneratedAnswerResult> => {
+    let result: GeneratedAnswerResult;
+    try {
+      result = await dependencies.generator.generate({ question: guardedQuestion, evidence, mode });
+    } catch (error) {
+      if (error instanceof ModelGenerationError) throw error;
+      throw new ModelGenerationError('OpenRouter answer generation failed.', { cause: error });
+    }
+    if (mode === 'general' && result.usedPokemonIds.length > 0) {
+      throw new ModelGenerationError('A general knowledge answer cannot cite indexed evidence.');
+    }
+    return result;
+  };
+
   let generated: GeneratedAnswerResult;
-  try {
-    generated = await dependencies.generator.generate({ question: guardedQuestion, evidence: guardedEvidence });
-  } catch (error) {
-    if (error instanceof ModelGenerationError) throw error;
-    throw new ModelGenerationError('OpenRouter answer generation failed.', { cause: error });
+  let generatedMode: PokemonAnswerMode;
+  if (guardedEvidence.length === 0) {
+    generatedMode = 'general';
+    generated = await generate('general', []);
+  } else {
+    generatedMode = 'retrieved';
+    generated = await generate('retrieved', guardedEvidence);
+    if (generated.abstained) {
+      generatedMode = 'general';
+      generated = await generate('general', []);
+    }
   }
 
   if (generated.abstained) {
     return AskResultSchema.parse({ answer: generated.answer, abstained: true, sources: [] });
+  }
+  if (generatedMode === 'general') {
+    return AskResultSchema.parse({ answer: generated.answer, abstained: false, sources: [] });
   }
 
   const retrievedById = new Map(retrieved.map((item) => [item.id, item]));
@@ -93,6 +101,89 @@ export async function answerQuestion(questionInput: unknown, dependencies: Answe
   const sources = usedEvidence.flatMap((item) => item.sources);
   const uniqueSources = [...new Map(sources.map((source) => [source.url, source])).values()];
   return AskResultSchema.parse({ answer: generated.answer, abstained: false, sources: uniqueSources });
+}
+
+export async function streamAnswerQuestion(
+  questionInput: unknown,
+  dependencies: AnswerQuestionDependencies,
+  signal: AbortSignal,
+  emit: (update: AskStreamUpdate) => void,
+): Promise<AskResult> {
+  const question = AskQuestionSchema.parse(questionInput);
+  const guardedQuestion = await dependencies.guardrail.checkQuestion(question, signal);
+  if (signal.aborted) throw signal.reason;
+
+  const intent = classifyQuestion(question);
+  let retrieved: RetrievedEvidence[];
+  try {
+    if (intent) {
+      retrieved = (await dependencies.store.lookup(dependencies.collectionName, intent.lookup))
+        .map((item) => RetrievedEvidenceSchema.parse(item));
+    } else {
+      const vector = await embedQuery(dependencies.embeddings, question);
+      retrieved = (await dependencies.store.searchByVector(dependencies.collectionName, vector, INITIAL_RETRIEVAL_TOP_K))
+        .map((item) => RetrievedEvidenceSchema.parse(item));
+    }
+  } catch (error) {
+    if (error instanceof RetrievalError) throw error;
+    throw new RetrievalError('Pokémon evidence retrieval failed.', { cause: error });
+  }
+  if (signal.aborted) throw signal.reason;
+  const guardedEvidence = dependencies.guardrail.checkEvidence(retrieved);
+
+  const generate = async (mode: PokemonAnswerMode, evidence: RetrievedEvidence[]): Promise<GeneratedAnswerResult> => {
+    try {
+      const input = { question: guardedQuestion, evidence, mode };
+      const result = dependencies.generator.stream
+        ? await dependencies.generator.stream({ ...input, signal }, (update) => {
+            emit(update.type === 'replace'
+              ? { type: 'replace', reason: 'revision', text: update.text }
+              : update);
+          })
+        : await dependencies.generator.generate(input);
+      if (!dependencies.generator.stream) emit({ type: 'delta', text: result.answer });
+      if (mode === 'general' && result.usedPokemonIds.length > 0) {
+        throw new ModelGenerationError('A general knowledge answer cannot cite indexed evidence.');
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof ModelGenerationError) throw error;
+      throw new ModelGenerationError('OpenRouter answer generation failed.', { cause: error });
+    }
+  };
+
+  let generated: GeneratedAnswerResult;
+  let generatedMode: PokemonAnswerMode;
+  if (guardedEvidence.length === 0) {
+    generatedMode = 'general';
+    generated = await generate('general', []);
+  } else {
+    generatedMode = 'retrieved';
+    generated = await generate('retrieved', guardedEvidence);
+    if (generated.abstained) {
+      emit({ type: 'replace', reason: 'fallback', text: '' });
+      if (signal.aborted) throw signal.reason;
+      generatedMode = 'general';
+      generated = await generate('general', []);
+    }
+  }
+
+  if (generated.abstained || generatedMode === 'general') {
+    return AskResultSchema.parse({ answer: generated.answer, abstained: generated.abstained, sources: [] });
+  }
+  const retrievedById = new Map(retrieved.map((item) => [item.id, item]));
+  const citedRecords = [...new Set(generated.usedPokemonIds)].map((id) => retrievedById.get(id));
+  if (citedRecords.length === 0 || citedRecords.some((item) => item === undefined)) {
+    throw new ModelGenerationError('The generated answer did not reference valid retrieved evidence.');
+  }
+  const sources = citedRecords
+    .filter((item): item is RetrievedEvidence => item !== undefined)
+    .flatMap((item) => item.sources);
+  return AskResultSchema.parse({
+    answer: generated.answer,
+    abstained: false,
+    sources: [...new Map(sources.map((source) => [source.url, source])).values()],
+  });
 }
 
 type ClassifiedQuestion = { lookup: PokemonLookup };
@@ -172,8 +263,4 @@ function normalizeText(value: string): string {
 
 function hasWord(value: string, word: string): boolean {
   return new RegExp(`(^|[^a-z])${word}($|[^a-z])`, 'i').test(value);
-}
-
-function isPortuguese(question: string): boolean {
-  return /\b(qual|quem|como|planta|numero|melhor|sobre|quais|pelo)\b/i.test(normalizeText(question));
 }

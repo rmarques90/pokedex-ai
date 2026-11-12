@@ -46,6 +46,13 @@ npm run dev:full
 
 The frontend runs at `http://localhost:5173` and proxies `/ask` requests to the API.
 
+### HTTP question endpoints
+
+- `POST /ask` keeps the JSON request/response flow for CLI integrations and other callers.
+- `POST /ask/stream` accepts the same `{ "question": "..." }` JSON body and returns named server-sent events: `delta` appends answer text, `replace` resets or corrects the draft, `complete` carries the validated final result and sources, and `error` carries a safe message plus a retryable flag. Validation errors are ordinary JSON responses before the stream starts.
+
+The web UI uses `/ask/stream`, renders answer text as it arrives, and offers a cancel control. It retries transient network failures, incomplete streams, HTTP 429/5xx responses, and retryable stream errors up to three times after the first attempt, with bounded backoff. User cancellation and non-retryable client errors are not retried. The stream uses the same retrieval, prompt-safety, and source validation flow as `/ask`; general-knowledge answers complete without RAG sources.
+
 ### Local API access
 
 The development API listens on the loopback address `127.0.0.1` by default. Browser requests to `POST /ask` are accepted when their `Origin` exactly matches `http://127.0.0.1:5173` or `http://localhost:5173`; the Vite proxy forwards the request to the API. Requests without an `Origin` header are also allowed for local maintenance.
@@ -89,6 +96,12 @@ npm run collect:populate-db
 ```
 
 Embedding requests are sent to OpenRouter. The database is stored locally in `store/lancedb/`; source JSON and image data are stored in `store/data/`.
+
+### Answer sources and model data
+
+The assistant searches the local index first. When indexed evidence supports an answer, it uses that evidence and returns its source links. If the index has no matching evidence or the grounded answer cannot be supported, the assistant may use the model's general knowledge for Pokemon topics; those answers have no RAG source links and are labeled as general model knowledge in the interface. The model is instructed to decline requests outside the Pokemon domain. This fallback does not use web search or external tools.
+
+The user question is sent to OpenRouter for safety assessment and embeddings. The answer model receives the question and, on the retrieved-evidence path, the selected Pokemon records. The general-knowledge fallback receives the question with an empty evidence list. The current index contains public Pokemon data; do not add sensitive records without revisiting the provider data flow and privacy requirements.
 
 ## Build and validate
 

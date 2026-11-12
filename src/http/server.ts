@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { AskRequestSchema, PromptGuardrailError, type AskResult } from '../domain/ask.js';
+import { AskRequestSchema, ModelGenerationError, PromptGuardrailError, RetrievalError, type AskResult } from '../domain/ask.js';
+import { AskStreamEventSchema, type AskStreamUpdate } from '../domain/ask-stream.js';
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
@@ -20,11 +21,12 @@ class ClientRequestError extends Error {
 }
 
 export type AskHandler = (question: string) => Promise<AskResult>;
+export type AskStreamHandler = (question: string, signal: AbortSignal, emit: (update: AskStreamUpdate) => void) => Promise<AskResult>;
 
-export function createAskHttpServer(ask: AskHandler, options: AskHttpServerOptions = {}): Server {
+export function createAskHttpServer(ask: AskHandler, options: AskHttpServerOptions = {}, askStream?: AskStreamHandler): Server {
   const allowedOrigins = new Set((options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS).map(normalizeConfiguredOrigin));
   return createServer((request, response) => {
-    void handleRequest(request, response, ask, allowedOrigins);
+    void handleRequest(request, response, ask, allowedOrigins, askStream);
   });
 }
 
@@ -33,8 +35,9 @@ export function listenAskHttpServer(
   port = 3000,
   host = '127.0.0.1',
   options: AskHttpServerOptions = {},
+  askStream?: AskStreamHandler,
 ): Promise<Server> {
-  const server = createAskHttpServer(ask, options);
+  const server = createAskHttpServer(ask, options, askStream);
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
@@ -49,6 +52,7 @@ async function handleRequest(
   response: ServerResponse,
   ask: AskHandler,
   allowedOrigins: ReadonlySet<string>,
+  askStream?: AskStreamHandler,
 ): Promise<void> {
   const requestOrigin = request.headers.origin;
   if (requestOrigin !== undefined && !allowedOrigins.has(normalizeRequestOrigin(requestOrigin))) {
@@ -57,7 +61,8 @@ async function handleRequest(
   }
 
   const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
-  if (request.method !== 'POST' || pathname !== '/ask') {
+  const streamRoute = pathname === '/ask/stream';
+  if (request.method !== 'POST' || (pathname !== '/ask' && !streamRoute)) {
     sendJson(response, 404, { error: 'Route not found.' });
     return;
   }
@@ -85,6 +90,15 @@ async function handleRequest(
     return;
   }
 
+  if (streamRoute) {
+    if (!askStream) {
+      sendJson(response, 404, { error: 'Route not found.' });
+      return;
+    }
+    await handleStreamRequest(request, response, askStream, parsed.data.question);
+    return;
+  }
+
   try {
     const result = await ask(parsed.data.question);
     sendJson(response, 200, result);
@@ -94,6 +108,49 @@ async function handleRequest(
       return;
     }
     sendJson(response, 500, { error: 'The Pokémon question could not be answered due to a server error.' });
+  }
+}
+
+async function handleStreamRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  askStream: AskStreamHandler,
+  question: string,
+): Promise<void> {
+  const controller = new AbortController();
+  const abortOnDisconnect = () => {
+    if (!response.writableEnded) controller.abort(new Error('Client disconnected.'));
+  };
+  request.once('aborted', abortOnDisconnect);
+  response.once('close', abortOnDisconnect);
+  response.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  const writeEvent = (event: unknown) => {
+    if (controller.signal.aborted || response.destroyed) return;
+    const parsed = AskStreamEventSchema.parse(event);
+    response.write(`event: ${parsed.type}\ndata: ${JSON.stringify(parsed)}\n\n`);
+  };
+  try {
+    const result = await askStream(question, controller.signal, (update) => writeEvent(update));
+    writeEvent({ type: 'complete', result });
+    if (!response.destroyed) response.end();
+  } catch (error) {
+    if (controller.signal.aborted || response.destroyed) return;
+    const retryable = !(error instanceof PromptGuardrailError);
+    const safeMessage = error instanceof PromptGuardrailError
+      ? error.message
+      : error instanceof ModelGenerationError || error instanceof RetrievalError
+        ? 'The answer could not be generated. Please try again.'
+        : 'The Pokémon question could not be answered due to a server error.';
+    writeEvent({ type: 'error', error: safeMessage, retryable });
+    if (!response.destroyed) response.end();
+  } finally {
+    request.removeListener('aborted', abortOnDisconnect);
+    response.removeListener('close', abortOnDisconnect);
   }
 }
 

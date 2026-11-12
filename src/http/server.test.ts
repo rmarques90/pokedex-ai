@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import type { Server } from 'node:http';
 import test from 'node:test';
 import { PromptGuardrailError, PromptSafetyModelError, type AskResult } from '../domain/ask.js';
-import { createAskHttpServer, type AskHttpServerOptions } from './server.js';
+import { createAskHttpServer, type AskHttpServerOptions, type AskStreamHandler } from './server.js';
 
 const success: AskResult = {
   answer: 'Bulbasaur is a Grass and Poison Pokémon.',
@@ -15,8 +15,9 @@ async function withServer<T>(
   ask: (question: string) => Promise<AskResult>,
   callback: (baseUrl: string) => Promise<T>,
   options?: AskHttpServerOptions,
+  askStream?: AskStreamHandler,
 ): Promise<T> {
-  const server = createAskHttpServer(ask, options);
+  const server = createAskHttpServer(ask, options, askStream);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -30,6 +31,10 @@ async function withServer<T>(
   }
 }
 
+async function postStream(baseUrl: string, body: string, headers: Record<string, string> = { 'content-type': 'application/json' }): Promise<Response> {
+  return fetch(`${baseUrl}/ask/stream`, { method: 'POST', headers, body });
+}
+
 async function post(baseUrl: string, body: string, headers: Record<string, string> = { 'content-type': 'application/json' }): Promise<Response> {
   return fetch(`${baseUrl}/ask`, { method: 'POST', headers, body });
 }
@@ -41,6 +46,64 @@ test('POST /ask returns the answer and source URLs', async () => {
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), success);
     assert.equal(receivedQuestion, 'What type is Bulbasaur?');
+  });
+});
+
+test('POST /ask/stream sends named events and completes with the AskResult', async () => {
+  await withServer(async () => success, async (baseUrl) => {
+    const response = await postStream(baseUrl, JSON.stringify({ question: 'What type is Bulbasaur?' }));
+    assert.equal(response.headers.get('content-type'), 'text/event-stream; charset=utf-8');
+    const body = await response.text();
+    assert.match(body, /event: delta\ndata: \{"type":"delta","text":"Bulbasaur"\}/);
+    assert.match(body, /event: complete\ndata: \{"type":"complete","result":/);
+  }, undefined, async (_question, _signal, emit) => {
+    emit({ type: 'delta', text: 'Bulbasaur' });
+    return success;
+  });
+});
+
+test('POST /ask/stream validates origin and JSON before starting SSE', async () => {
+  await withServer(async () => success, async (baseUrl) => {
+    const badOrigin = await postStream(baseUrl, JSON.stringify({ question: 'Pikachu?' }), {
+      'content-type': 'application/json', origin: 'https://attacker.example',
+    });
+    assert.equal(badOrigin.status, 403);
+    assert.equal(badOrigin.headers.get('content-type'), 'application/json; charset=utf-8');
+    const invalidBody = await postStream(baseUrl, JSON.stringify({ question: '' }));
+    assert.equal(invalidBody.status, 400);
+    assert.equal(invalidBody.headers.get('content-type'), 'application/json; charset=utf-8');
+  }, undefined, async () => success);
+});
+
+test('POST /ask/stream returns safe retryability for a generation failure', async () => {
+  await withServer(async () => success, async (baseUrl) => {
+    const response = await postStream(baseUrl, JSON.stringify({ question: 'Pikachu?' }));
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /question could not be answered due to a server error/);
+  }, undefined, async () => { throw new Error('provider secret detail'); });
+});
+
+test('aborts the streaming handler when the client disconnects', async () => {
+  let markCancelled!: () => void;
+  const cancelled = new Promise<void>((resolve) => { markCancelled = resolve; });
+  await withServer(async () => success, async (baseUrl) => {
+    const controller = new AbortController();
+    const response = await fetch(`${baseUrl}/ask/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'Pikachu?' }),
+      signal: controller.signal,
+    });
+    const reader = response.body?.getReader();
+    assert.ok(reader);
+    await reader.read();
+    controller.abort();
+    await cancelled;
+    await reader.cancel().catch(() => undefined);
+  }, undefined, async (_question, signal, emit) => {
+    emit({ type: 'delta', text: 'Pikachu' });
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => { markCancelled(); resolve(); }, { once: true }));
+    return success;
   });
 });
 

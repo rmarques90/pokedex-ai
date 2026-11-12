@@ -75,4 +75,9 @@ test('composes local store, embedding, guardrail, and generator dependencies wit
   assert.equal(receivedKey, 'runtime-secret');
   assert.equal(answer.abstained, false);
   assert.equal(answer.sources[0]?.url, evidence.sources[0]?.url);
+  assert.ok(runtime.askStream);
+  const updates: unknown[] = [];
+  const streamed = await runtime.askStream('What type is Bulbasaur?', new AbortController().signal, (event) => updates.push(event));
+  assert.equal(streamed.answer, answer.answer);
+  assert.deepEqual(updates, [{ type: 'delta', text: answer.answer }]);
 });

@@ -13,12 +13,14 @@ export interface UiCopy {
   trainer: string; journey: string; breadcrumb: string; pageTitle: string; pageSubtitle: string;
   heroTitle: string; heroSubtitle: string; pokemonBadge: string; questionLabel: string;
   questionPlaceholder: string; ask: string; emptyQuestion: string; loading: string;
-  requestError: string; retry: string; answerLabel: string; insufficientEvidence: string;
+  requestError: string; retry: string; answerLabel: string; insufficientEvidence: string; generalKnowledge: string;
   sourcesLabel: string; footerNote: string; languageSelector: string; keyboardHint: string;
+  cancel: string; retrying: string;
 }
 
 export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
   pt: {
+    cancel: 'Cancelar', retrying: 'Tentativa {attempt} de 3; tentando novamente...',
     brandTagline: 'Sua Pokédex inteligente', newQuestion: 'Nova pergunta', assistantName: 'Assistente Pokémon',
     suggestedQuestions: 'Perguntas sugeridas', trainer: 'Treinador(a)', journey: 'Sua jornada Pokémon',
     breadcrumb: 'Seu espaço', pageTitle: 'Uma pergunta. Novas descobertas.',
@@ -29,9 +31,11 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     emptyQuestion: 'Digite uma pergunta para continuar.', loading: 'Consultando a Pokédex…',
     requestError: 'Não foi possível consultar a Pokédex. Tente novamente.', retry: 'Tentar novamente',
     answerLabel: 'Pokédex AI', insufficientEvidence: 'Os dados indexados não contêm informação suficiente para responder a esta pergunta.',
+    generalKnowledge: 'Resposta baseada no conhecimento geral do modelo, sem refer\u00eancias do\u0020\u00edndice.',
     sourcesLabel: 'Referências', footerNote: 'Confira os detalhes nas fontes.', languageSelector: '\u0049dioma da interface', keyboardHint: 'Enter para perguntar \u00b7 Shift+Enter para pular linha',
   },
   en: {
+    cancel: 'Cancel', retrying: 'Retry {attempt} of 3; trying again...',
     brandTagline: 'Your intelligent Pokédex', newQuestion: 'New question', assistantName: 'Pokémon Assistant',
     suggestedQuestions: 'Suggested questions', trainer: 'Trainer', journey: 'Your Pokémon journey',
     breadcrumb: 'Your space', pageTitle: 'One question. New discoveries.',
@@ -42,6 +46,7 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     emptyQuestion: 'Enter a question to continue.', loading: 'Checking the Pokédex…',
     requestError: 'The Pokédex could not be reached. Please try again.', retry: 'Try again',
     answerLabel: 'Pokédex AI', insufficientEvidence: 'The indexed data does not contain enough information to answer this question.',
+    generalKnowledge: 'Answer based on the model\'s general knowledge; no indexed references were used.',
     sourcesLabel: 'References', footerNote: 'Check the sources for details.', languageSelector: 'Interface language', keyboardHint: 'Enter to ask \u00b7 Shift+Enter for a new line',
   },
 };
