@@ -124,7 +124,7 @@ test('searches only the requested collection, honors topK, and returns validated
   assert.equal(found[0]?.id, 1);
   assert.equal(found[0]?.pokemonName, 'bulbasaur');
   assert.equal(found[0]?.sources.some(({ url }) => url.includes('bulbapedia')), true);
-  assert.equal(found[0]?.sources.some(({ url }) => url === 'https://pokeapi.co/api/v2/type/grass/'), true);
+  assert.equal(found[0]?.sources.some(({ url }) => url === 'https://pokeapi.co/api/v2/type/12/'), true);
   const storedBulbasaur = await (await connection.openTable('pokedex_vectors')).query().where('id = 1').toArray();
   const storedTypes = JSON.parse(String(storedBulbasaur[0]?.typeDetails)) as Array<{ damageRelations: { noDamageTo: Array<{ name: string }> } }>;
   assert.equal(storedTypes[0]?.damageRelations.noDamageTo[0]?.name, 'ghost');

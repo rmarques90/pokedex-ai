@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
 import test from 'node:test';
-import { PromptGuardrailError, type AskResult } from '../domain/ask.js';
+import { PromptGuardrailError, PromptSafetyModelError, type AskResult } from '../domain/ask.js';
 import { createAskHttpServer } from './server.js';
 
 const success: AskResult = {
@@ -76,7 +76,7 @@ test('rejects malformed JSON, invalid questions, and non-JSON content types befo
 });
 
 test('maps server failures to safe HTTP 500 responses and guardrail rejections to client errors', async () => {
-  await withServer(async () => { throw new Error('private key detail'); }, async (baseUrl) => {
+  await withServer(async () => { throw new PromptSafetyModelError('private key detail'); }, async (baseUrl) => {
     const response = await post(baseUrl, JSON.stringify({ question: 'Question?' }));
     const body = await response.text();
     assert.equal(response.status, 500);

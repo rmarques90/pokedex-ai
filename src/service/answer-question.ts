@@ -33,7 +33,7 @@ export interface GeneratedAnswerResult {
 
 export async function answerQuestion(questionInput: unknown, dependencies: AnswerQuestionDependencies): Promise<AskResult> {
   const question = AskQuestionSchema.parse(questionInput);
-  await dependencies.guardrail.invoke({ question, evidence: [] });
+  const guardedQuestion = await dependencies.guardrail.checkQuestion(question);
 
   let retrieved: RetrievedEvidence[];
   const intent = classifyQuestion(question);
@@ -66,10 +66,10 @@ export async function answerQuestion(questionInput: unknown, dependencies: Answe
     return AskResultSchema.parse({ answer: INSUFFICIENT_EVIDENCE_ANSWER, abstained: true, sources: [] });
   }
 
-  const guarded = await dependencies.guardrail.invoke({ question, evidence: retrieved });
+  const guardedEvidence = dependencies.guardrail.checkEvidence(retrieved);
   let generated: GeneratedAnswerResult;
   try {
-    generated = await dependencies.generator.generate({ question: guarded.question, evidence: guarded.evidence });
+    generated = await dependencies.generator.generate({ question: guardedQuestion, evidence: guardedEvidence });
   } catch (error) {
     if (error instanceof ModelGenerationError) throw error;
     throw new ModelGenerationError('OpenRouter answer generation failed.', { cause: error });

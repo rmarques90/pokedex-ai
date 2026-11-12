@@ -83,6 +83,12 @@ export class PromptGuardrailError extends AskDomainError {
   }
 }
 
+export class PromptSafetyModelError extends AskDomainError {
+  constructor(message = 'The prompt safety service is unavailable.', options?: ErrorOptions) {
+    super(message, options);
+  }
+}
+
 export class AskRuntimeConfigurationError extends AskDomainError {
   constructor(message = 'Set a valid LANCEDB_COLLECTION_NAME and OPENROUTER_API_KEY in the local environment.', options?: ErrorOptions) {
     super(message, options);

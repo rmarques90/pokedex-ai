@@ -4,6 +4,7 @@ import { EMBEDDING_DIMENSIONS } from '../constants.js';
 import {
   ModelGenerationError,
   PromptGuardrailError,
+  PromptSafetyModelError,
   RetrievalError,
   type RetrievedEvidence,
 } from '../domain/ask.js';
@@ -48,6 +49,7 @@ function dependencies(overrides: {
   question?: string;
   generated?: { answer: string; abstained: boolean; usedPokemonIds: number[] };
   failGuardrail?: boolean;
+  failSafetyModel?: boolean;
   failRetrieval?: boolean;
   failModel?: boolean;
 } = {}) {
@@ -94,10 +96,16 @@ function dependencies(overrides: {
     },
   };
   const guardrail: PromptInjectionGuardrail = {
-    async invoke(input) {
-      calls.push('guardrail');
+    async checkQuestion(question) {
+      calls.push('guardrail:question');
       if (overrides.failGuardrail) throw new PromptGuardrailError();
-      return input;
+      if (overrides.failSafetyModel) throw new PromptSafetyModelError();
+      return question as string;
+    },
+    checkEvidence(items) {
+      calls.push('guardrail:evidence');
+      if (overrides.failGuardrail) throw new PromptGuardrailError();
+      return items as RetrievedEvidence[];
     },
   };
   return {
@@ -114,7 +122,7 @@ test('embeds, retrieves five records, guards the question and context, and cites
   const result = await answerQuestion('Why does the seed grow?', fixture.dependencies);
   assert.equal(INITIAL_RETRIEVAL_TOP_K, 5);
   assert.deepEqual(fixture.requestedLimits, [5]);
-  assert.deepEqual(fixture.calls, ['guardrail', 'embedding', 'store', 'guardrail', 'model']);
+  assert.deepEqual(fixture.calls, ['guardrail:question', 'embedding', 'store', 'guardrail:evidence', 'model']);
   assert.deepEqual(result, {
     answer: 'Bulbasaur is a Grass and Poison Pokémon.',
     abstained: false,
@@ -139,7 +147,14 @@ test('fails closed before model invocation when the guardrail rejects input or e
   const fixture = dependencies({ failGuardrail: true });
   await assert.rejects(answerQuestion('Why does the seed grow?', fixture.dependencies), PromptGuardrailError);
   assert.equal(fixture.modelCalls, 0);
-  assert.deepEqual(fixture.calls, ['guardrail']);
+  assert.deepEqual(fixture.calls, ['guardrail:question']);
+});
+
+test('fails closed before embeddings, retrieval, and answer generation when safety assessment is unavailable', async () => {
+  const fixture = dependencies({ failSafetyModel: true });
+  await assert.rejects(answerQuestion('Why does the seed grow?', fixture.dependencies), PromptSafetyModelError);
+  assert.deepEqual(fixture.calls, ['guardrail:question']);
+  assert.equal(fixture.modelCalls, 0);
 });
 
 test('wraps retrieval and model failures without exposing internal details', async () => {
@@ -178,7 +193,7 @@ test('uses exact indexed lookup for National Pokedex number 3 even when vector s
   });
   const result = await answerQuestion(question, fixture.dependencies);
   assert.deepEqual(fixture.lookups, [{ kind: 'id', id: 3 }]);
-  assert.deepEqual(fixture.calls, ['guardrail', 'lookup', 'guardrail', 'model']);
+  assert.deepEqual(fixture.calls, ['guardrail:question', 'lookup', 'guardrail:evidence', 'model']);
   assert.equal(fixture.modelCalls, 1);
   assert.equal(result.answer, 'O Pokémon #3 é Venusaur.');
   assert.deepEqual(result.sources, venusaur.sources);
@@ -197,7 +212,7 @@ test('uses exact canonical-name lookup and reports a missing direct record clear
   const missingResult = await answerQuestion('What Pokémon is #999?', missingFixture.dependencies);
   assert.equal(missingResult.abstained, true);
   assert.match(missingResult.answer, /No matching Pokémon record/);
-  assert.deepEqual(missingFixture.calls, ['guardrail', 'lookup']);
+  assert.deepEqual(missingFixture.calls, ['guardrail:question', 'lookup']);
   assert.equal(missingFixture.modelCalls, 0);
 
   const missingNameFixture = dependencies({ question: 'Who is Missingno?' });
@@ -228,13 +243,13 @@ test('compares all indexed records of a requested type using total base stats', 
   assert.match(result.answer, /Venusaur: HP 80/);
   assert.deepEqual([...new Set(result.sources.map(({ pokemonId }) => pokemonId))], [1, 3]);
   assert.equal(fixture.modelCalls, 1);
-  assert.deepEqual(fixture.calls, ['guardrail', 'lookup', 'guardrail', 'model']);
+  assert.deepEqual(fixture.calls, ['guardrail:question', 'lookup', 'guardrail:evidence', 'model']);
 });
 
 test('does not misclassify generic Pokémon questions as exact-name lookups', async () => {
   const fixture = dependencies({ question: 'What is a Pokémon?' });
   const result = await answerQuestion('What is a Pokémon?', fixture.dependencies);
   assert.equal(result.abstained, false);
-  assert.deepEqual(fixture.calls, ['guardrail', 'embedding', 'store', 'guardrail', 'model']);
+  assert.deepEqual(fixture.calls, ['guardrail:question', 'embedding', 'store', 'guardrail:evidence', 'model']);
   assert.deepEqual(fixture.lookups, []);
 });

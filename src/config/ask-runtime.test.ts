@@ -64,6 +64,10 @@ test('composes local store, embedding, guardrail, and generator dependencies wit
       receivedKey = apiKey;
       return { async generate() { return { answer: 'Bulbasaur is Grass and Poison type.', abstained: false, usedPokemonIds: [1] }; } };
     },
+    createPromptSafetyClassifier(apiKey) {
+      receivedKey = apiKey;
+      return { async assess() { return { safe: true }; } };
+    },
   });
 
   const answer = await runtime.ask('What type is Bulbasaur?');

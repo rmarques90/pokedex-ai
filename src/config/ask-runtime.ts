@@ -5,6 +5,7 @@ import {
 } from '../domain/ask.js';
 import { createOpenRouterAnswerGenerator, type PokemonAnswerGenerator } from '../service/openrouter-chat-model.js';
 import { answerQuestion, type AnswerQuestionDependencies } from '../service/answer-question.js';
+import { createOpenRouterPromptSafetyClassifier, type PromptSafetyClassifier } from '../service/openrouter-prompt-safety.js';
 import {
   createOpenRouterEmbeddings,
   type EmbeddingClient,
@@ -18,7 +19,8 @@ export interface AskServiceRuntimeOptions {
   connectStore?: () => Promise<LocalVectorStoreHandle>;
   createEmbeddings?: (apiKey: string) => EmbeddingClient & QueryEmbeddingClient;
   createGenerator?: (apiKey: string) => PokemonAnswerGenerator;
-  createGuardrail?: () => PromptInjectionGuardrail;
+  createGuardrail?: (apiKey: string) => PromptInjectionGuardrail;
+  createPromptSafetyClassifier?: (apiKey: string) => PromptSafetyClassifier;
 }
 
 export interface AskService {
@@ -39,7 +41,9 @@ export async function createAskService(options: AskServiceRuntimeOptions): Promi
   const { store } = await (options.connectStore ?? connectLocalVectorStore)();
   const embeddings = (options.createEmbeddings ?? createOpenRouterEmbeddings)(config.openRouterApiKey);
   const generator = (options.createGenerator ?? createOpenRouterAnswerGenerator)(config.openRouterApiKey);
-  const guardrail = (options.createGuardrail ?? createPromptInjectionGuardrail)();
+  const guardrail = (options.createGuardrail ?? ((apiKey) => createPromptInjectionGuardrail(
+    (options.createPromptSafetyClassifier ?? createOpenRouterPromptSafetyClassifier)(apiKey),
+  )))(config.openRouterApiKey);
   const dependencies: AnswerQuestionDependencies = {
     collectionName: config.collectionName,
     store,

@@ -39,6 +39,12 @@ test('CLI and HTTP use the same composed answer service and return consistent re
     createGenerator() {
       return { async generate() { return { answer: 'Bulbasaur is Grass and Poison type.', abstained: false, usedPokemonIds: [1] }; } };
     },
+    createGuardrail() {
+      return {
+        async checkQuestion(question) { return question as string; },
+        checkEvidence(items) { return items as RetrievedEvidence[]; },
+      };
+    },
   });
 
   const stdout: string[] = [];
