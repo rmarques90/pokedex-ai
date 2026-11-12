@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import type { Server } from 'node:http';
 import test from 'node:test';
 import { PromptGuardrailError, PromptSafetyModelError, type AskResult } from '../domain/ask.js';
+import { createUserIdentityService } from '../service/user-identity.js';
 import { createAskHttpServer, type AskHttpServerOptions, type AskStreamHandler } from './server.js';
 
 const success: AskResult = {
@@ -197,4 +198,41 @@ test('returns not found for any route other than POST /ask', async () => {
     const response = await fetch(`${baseUrl}/other`, { method: 'GET' });
     assert.equal(response.status, 404);
   });
+});
+
+test('POST /auth/login validates input and returns a public identity', async () => {
+  const calls: unknown[] = [];
+  const identityService = createUserIdentityService({
+    findOrCreateByName(name) { calls.push(name); return { id: '00000000-0000-4000-8000-000000000001', name }; },
+    close() {},
+  });
+  await withServer(async () => success, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Ash' }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { id: '00000000-0000-4000-8000-000000000001', name: 'Ash' });
+    const invalid = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '  ' }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(calls.length, 1);
+  }, { login: (input) => identityService.login(input) });
+});
+
+test('POST /auth/login rejects malformed JSON, unsupported methods, and disallowed origins before login', async () => {
+  let calls = 0;
+  await withServer(async () => success, async (baseUrl) => {
+    const malformed = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{invalid',
+    });
+    assert.equal(malformed.status, 400);
+    const unsupported = await fetch(`${baseUrl}/auth/login`);
+    assert.equal(unsupported.status, 404);
+    const forbidden = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://attacker.example' }, body: JSON.stringify({ name: 'Ash' }),
+    });
+    assert.equal(forbidden.status, 403);
+    assert.equal(calls, 0);
+  }, { login: () => { calls += 1; return {}; } });
 });

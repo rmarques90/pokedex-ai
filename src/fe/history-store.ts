@@ -74,10 +74,6 @@ export function createHistoryStore({ storage, now = () => new Date(), createId =
         try { storage.removeItem(HISTORY_STORAGE_KEY); }
         catch { persistent = false; }
       }
-      if (persistent && storage) {
-        try { storage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(document)); }
-        catch { persistent = false; }
-      }
       return { document, persistent };
     },
   };

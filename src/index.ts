@@ -4,6 +4,8 @@ import type { Server } from 'node:http';
 import { createAskService, loadLocalEnvironment, type AskService } from './config/ask-runtime.js';
 import { AskDomainError } from './domain/ask.js';
 import { DEFAULT_FRONTEND_ORIGINS, listenAskHttpServer } from './http/server.js';
+import { SqliteUserStore, type UserStore } from './store/sqlite-user-store.js';
+import { createUserIdentityService } from './service/user-identity.js';
 
 export interface ApiServerOptions {
   service?: AskService;
@@ -11,13 +13,25 @@ export interface ApiServerOptions {
   port?: number;
   host?: string;
   allowedOrigins?: readonly string[];
+  userStore?: UserStore;
+  createUserStore?: () => UserStore;
 }
 
 export async function startApiServer(options: ApiServerOptions = {}): Promise<Server> {
   const service = options.service ?? await createAskService({ environment: options.environment ?? process.env });
-  return listenAskHttpServer(service.ask, options.port ?? 3000, options.host ?? '127.0.0.1', {
-    allowedOrigins: options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS,
-  }, service.askStream);
+  const userStore = options.userStore ?? (options.createUserStore ?? (() => new SqliteUserStore()))();
+  const identityService = createUserIdentityService(userStore);
+  try {
+    const server = await listenAskHttpServer(service.ask, options.port ?? 3000, options.host ?? '127.0.0.1', {
+      allowedOrigins: options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS,
+      login: (input) => identityService.login(input),
+    }, service.askStream);
+    server.once('close', () => userStore.close());
+    return server;
+  } catch (error) {
+    userStore.close();
+    throw error;
+  }
 }
 
 async function main(): Promise<void> {

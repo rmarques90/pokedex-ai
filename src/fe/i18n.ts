@@ -19,10 +19,13 @@ export interface UiCopy {
   history: string; historyEmpty: string; clearHistory: string; deleteConversation: string;
   confirmDeleteTitle: string; confirmDeleteMessage: string; confirmClearTitle: string; confirmClearMessage: string;
   confirm: string; dismiss: string; savedAnswer: string; storageWarning: string; close: string;
+  loginTitle: string; loginSubtitle: string; nameLabel: string; namePlaceholder: string; loginAction: string;
+  loginError: string; logout: string;
 }
 
 export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
   pt: {
+    loginTitle: 'Entre com seu nome', loginSubtitle: 'Use um nome para identificar esta sessão.', nameLabel: 'Seu nome', namePlaceholder: 'Digite seu nome', loginAction: 'Continuar', loginError: 'Não foi possível entrar. Confira o nome e tente novamente.', logout: 'Sair',
     cancel: 'Cancelar', retrying: 'Tentativa {attempt} de 3; tentando novamente...',
     history: 'Conversas anteriores', historyEmpty: 'Suas perguntas concluídas aparecerão aqui.',
     clearHistory: 'Limpar histórico', deleteConversation: 'Excluir conversa',
@@ -43,6 +46,7 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     sourcesLabel: 'Referências', footerNote: 'Confira os detalhes nas fontes.', languageSelector: '\u0049dioma da interface', keyboardHint: 'Enter para perguntar \u00b7 Shift+Enter para pular linha',
   },
   en: {
+    loginTitle: 'Enter your name', loginSubtitle: 'Choose a name to identify this session.', nameLabel: 'Your name', namePlaceholder: 'Enter your name', loginAction: 'Continue', loginError: 'Could not sign in. Check the name and try again.', logout: 'Log out',
     cancel: 'Cancel', retrying: 'Retry {attempt} of 3; trying again...',
     history: 'Previous conversations', historyEmpty: 'Your completed questions will appear here.',
     clearHistory: 'Clear history', deleteConversation: 'Delete conversation',

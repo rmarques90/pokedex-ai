@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AskApiError, askPokemon, askPokemonStream, type AskFetcher } from './api-client.js';
+import { AskApiError, askPokemon, askPokemonStream, loginUser, type AskFetcher } from './api-client.js';
 
 const result = {
   answer: 'Bulbasaur is a Grass and Poison Pokémon.',
   abstained: false,
   sources: [{ pokemonId: 1, pokemonName: 'bulbasaur', url: 'https://pokeapi.co/api/v2/pokemon/1/' }],
 };
+
+test('POST /auth/login sends the name and validates the public user response', async () => {
+  let receivedUrl: RequestInfo | URL | undefined;
+  let receivedInit: RequestInit | undefined;
+  const identity = { id: '00000000-0000-4000-8000-000000000001', name: 'Ash' };
+  const user = await loginUser('Ash', async (input, init) => {
+    receivedUrl = input; receivedInit = init;
+    return { ok: true, status: 200, json: async () => identity };
+  });
+  assert.deepEqual(user, identity);
+  assert.equal(receivedUrl, '/auth/login');
+  assert.equal(receivedInit?.method, 'POST');
+  assert.deepEqual(JSON.parse(String(receivedInit?.body)), { name: 'Ash' });
+  await assert.rejects(loginUser('Ash', async () => ({ ok: true, status: 200, json: async () => ({ id: 'bad', name: 'Ash' }) })));
+});
 
 test('sends a question-only POST request and validates the answer response', async () => {
   let receivedUrl: RequestInfo | URL | undefined;

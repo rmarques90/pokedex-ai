@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { askPokemonStream, type AskStreamOptions } from './api-client.js';
+import { askPokemonStream, loginUser, type AskStreamOptions } from './api-client.js';
 import type { AskResult } from '../domain/ask.js';
+import type { PublicUser } from '../domain/user.js';
 import type { BrowserHistoryDocument, BrowserHistoryEntry } from '../domain/browser-history.js';
 import { createHistoryStore, type HistoryStore } from './history-store.js';
 import { readLanguagePreference, saveLanguagePreference, UI_COPY, type Language } from './i18n.js';
+import { clearActiveUser, readActiveUser, saveActiveUser } from './user-session.js';
 
 export type AskAction = (question: string, options?: AskStreamOptions) => Promise<AskResult>;
 type Confirmation = { kind: 'clear' } | { kind: 'delete'; conversationId: string };
 
-export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
+export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAction; login?: (name: string) => Promise<PublicUser> }) {
   const [language, setLanguage] = useState<Language>(() => readLanguagePreference());
+  const [user, setUser] = useState<PublicUser | null>(() => readActiveUser(getLocalStorage()));
+  const [loginName, setLoginName] = useState('');
+  const [loginError, setLoginError] = useState(false);
   const storeRef = useRef<HistoryStore | null>(null);
   if (!storeRef.current) {
     let storage: Storage | null = null;
@@ -58,6 +63,26 @@ export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
   }, [selectedEntry]);
 
   function changeLanguage(next: Language) { setLanguage(next); saveLanguagePreference(next); }
+  async function handleLogin(event: FormEvent) {
+    event.preventDefault();
+    const name = loginName.trim();
+    if (!name) return;
+    setLoginError(false);
+    try {
+      const identity = await login(name);
+      saveActiveUser(identity, getLocalStorage());
+      setUser(identity);
+      setLoginName('');
+    } catch { setLoginError(true); }
+  }
+  function logout() {
+    cancel();
+    updateHistory(store.clear());
+    clearActiveUser(getLocalStorage());
+    setUser(null);
+    setLoginName(''); setLoginError(false); setSubmittedQuestion('');
+    setSelectedEntry(null); setConfirmation(null); setHistoryOpen(false);
+  }
   function updateHistory(next: { document: BrowserHistoryDocument; persistent: boolean }) {
     setHistory(next.document);
     setStorageWarning(!next.persistent);
@@ -123,6 +148,21 @@ export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
     .sort((a, b) => b.entry.createdAt.localeCompare(a.entry.createdAt) || b.index - a.index)
     .map(({ entry }) => entry);
 
+  if (!user) return (
+    <main className="login-screen">
+      <a className="brand login-brand" href="#home" aria-label={'Pok\u00e9dex AI home'}><span className="brand-ball" /> <span><strong>{'Pok\u00e9dex'}</strong><b>AI</b><small>{copy.brandTagline}</small></span></a>
+      <div className="language-label login-language" role="group" aria-label={copy.languageSelector}><button type="button" className="language-option" aria-pressed={language === 'pt'} onClick={() => changeLanguage('pt')}><LanguageFlag language="pt" /> <span>Portugu\u00eas</span></button><button type="button" className="language-option" aria-pressed={language === 'en'} onClick={() => changeLanguage('en')}><LanguageFlag language="en" /> <span>English</span></button></div>
+      <form className="login-card" onSubmit={(event) => void handleLogin(event)}>
+        <div className="login-mark">{String.fromCodePoint(0x2726)}</div>
+        <h1>{copy.loginTitle}</h1><p>{copy.loginSubtitle}</p>
+        <label htmlFor="login-name">{copy.nameLabel}</label>
+        <input id="login-name" autoComplete="name" maxLength={100} value={loginName} onChange={(event) => { setLoginName(event.target.value); setLoginError(false); }} placeholder={copy.namePlaceholder} />
+        {loginError && <div className="login-error" role="alert">{copy.loginError}</div>}
+        <button type="submit" disabled={!loginName.trim()}>{copy.loginAction}</button>
+      </form>
+    </main>
+  );
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label={copy.assistantName}>
@@ -140,7 +180,7 @@ export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
         </section>
         <div className="suggestion-title">{copy.suggestedQuestions}</div>
         <nav className="suggestions" aria-label={copy.suggestedQuestions}>{suggestions.map((item) => <button key={item} onClick={() => void submit(undefined, item)}>{item}<span>{'\u2197'}</span></button>)}</nav>
-        <div className="trainer"><div className="trainer-avatar">{'\u2726'}</div><div><strong>{copy.trainer}</strong><small>{'Pok\u00e9dex AI'}</small></div><span className="trainer-dot" /></div>
+        <div className="trainer"><div className="trainer-avatar">{'\u2726'}</div><div className="trainer-name"><strong>{user.name}</strong><small>{'Pok\u00e9dex AI'}</small></div><button type="button" className="logout-button" onClick={logout} aria-label={copy.logout} title={copy.logout}>{copy.logout}</button></div>
       </aside>
 
       <main className="main-panel" id="home">
@@ -200,6 +240,9 @@ function AnswerCard({ entry, copy }: { entry: BrowserHistoryEntry; copy: (typeof
 function formatTimestamp(value: string, language: Language) {
   try { return new Intl.DateTimeFormat(language === 'pt' ? 'pt-BR' : 'en-US', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)); }
   catch { return value; }
+}
+function getLocalStorage(): Storage | null {
+  try { return typeof window === 'undefined' ? null : window.localStorage; } catch { return null; }
 }
 function getSourceIdentity(sourceUrl: string): string {
   try { const source = new URL(sourceUrl); return `${source.host}${source.pathname}${source.search}${source.hash}`; }

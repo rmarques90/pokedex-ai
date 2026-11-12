@@ -4,4 +4,7 @@
 !.env.example
 dist/
 store/data/
+store/data/users.sqlite
+store/data/users.sqlite-wal
+store/data/users.sqlite-shm
 store/lancedb/

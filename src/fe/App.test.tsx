@@ -13,13 +13,18 @@ Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: tr
 const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const { App } = await import('./App.js');
 const { HISTORY_STORAGE_KEY } = await import('./history-store.js');
+const { USER_STORAGE_KEY } = await import('./user-session.js');
 const answer = {
   answer: 'Fire Pokémon are weak against Water, Ground, and Rock attacks.',
   abstained: false,
   sources: [{ pokemonId: 4, pokemonName: 'charmander', url: 'https://pokeapi.co/api/v2/pokemon/4/' }],
 };
 
-beforeEach(() => { window.localStorage.setItem('pokedex-ai.language', 'pt'); });
+const testUser = { id: '00000000-0000-4000-8000-000000000001', name: 'Ash' };
+beforeEach(() => {
+  window.localStorage.setItem('pokedex-ai.language', 'pt');
+  window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(testUser));
+});
 afterEach(() => { cleanup(); window.localStorage.clear(); });
 after(() => dom.window.close());
 
@@ -339,4 +344,58 @@ test('clear history requires confirmation and removes saved conversations', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
   await waitFor(() => assert.equal(screen.queryByText(answer.answer), null));
   assert.equal(document.querySelector('.history-entry'), null);
+});
+
+test('gates users on localized login and keeps the entered name after request failure', async () => {
+  window.localStorage.removeItem(USER_STORAGE_KEY);
+  render(<App login={async () => { throw new Error('network'); }} />);
+  assert.ok(screen.getByRole('heading', { name: 'Entre com seu nome' }));
+  const name = screen.getByRole('textbox', { name: 'Seu nome' });
+  fireEvent.change(name, { target: { value: 'Misty' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+  await screen.findByRole('alert');
+  assert.equal((name as HTMLInputElement).value, 'Misty');
+  fireEvent.click(screen.getByRole('button', { name: 'English' }));
+  assert.ok(screen.getByRole('heading', { name: 'Enter your name' }));
+});
+
+test('logs in, persists the identity, and restores it after reload', async () => {
+  window.localStorage.removeItem(USER_STORAGE_KEY);
+  const view = render(<App login={async () => testUser} ask={async () => answer} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Seu nome' }), { target: { value: 'Ash' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+  await screen.findByRole('textbox', { name: 'Sua pergunta' });
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(USER_STORAGE_KEY)!), testUser);
+  assert.ok(screen.getByText('Ash'));
+  view.unmount();
+  render(<App ask={async () => answer} />);
+  assert.ok(screen.getByRole('textbox', { name: 'Sua pergunta' }));
+  assert.ok(screen.getByText('Ash'));
+});
+
+test('logout aborts active work, removes all local conversation history, and preserves language', async () => {
+  let askCount = 0;
+  let receivedSignal: AbortSignal | undefined;
+  let finishPending!: (value: typeof answer) => void;
+  render(<App ask={(_question, options) => {
+    askCount += 1;
+    if (askCount === 1) return Promise.resolve(answer);
+    receivedSignal = options?.signal;
+    return new Promise((resolve) => { finishPending = resolve; });
+  }} />);
+  const input = screen.getByRole('textbox', { name: 'Sua pergunta' });
+  const form = screen.getByRole('button', { name: /Perguntar/ }).closest('form')!;
+  fireEvent.change(input, { target: { value: 'Saved conversation' } });
+  fireEvent.submit(form);
+  await screen.findByText(answer.answer);
+  assert.ok(window.localStorage.getItem(HISTORY_STORAGE_KEY));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Pending question' } });
+  fireEvent.submit(screen.getByRole('button', { name: /Perguntar/ }).closest('form')!);
+  fireEvent.click(screen.getByRole('button', { name: 'Sair' }));
+  assert.equal(receivedSignal?.aborted, true);
+  assert.equal(window.localStorage.getItem(USER_STORAGE_KEY), null);
+  assert.equal(window.localStorage.getItem(HISTORY_STORAGE_KEY), null);
+  assert.equal(window.localStorage.getItem('pokedex-ai.language'), 'pt');
+  assert.ok(screen.getByRole('heading', { name: 'Entre com seu nome' }));
+  finishPending(answer);
 });

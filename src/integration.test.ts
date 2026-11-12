@@ -6,6 +6,7 @@ import type { LocalVectorStoreHandle } from './store/local-lancedb.js';
 import { createAskService } from './config/ask-runtime.js';
 import { runCli } from './cli.js';
 import { startApiServer } from './index.js';
+import { SqliteUserStore } from './store/sqlite-user-store.js';
 
 test('CLI and HTTP use the same composed answer service and return consistent results', async () => {
   const evidence: RetrievedEvidence = {
@@ -56,7 +57,7 @@ test('CLI and HTTP use the same composed answer service and return consistent re
   assert.equal(cliExitCode, 0);
   assert.deepEqual(stderr, []);
 
-  const server = await startApiServer({ service, port: 0 });
+  const server = await startApiServer({ service, port: 0, userStore: new SqliteUserStore({ databasePath: ':memory:' }) });
   try {
     const address = server.address();
     assert.ok(address && typeof address !== 'string');

@@ -1,9 +1,39 @@
 import { AskQuestionSchema, AskResultSchema, type AskResult } from '../domain/ask.js';
 import { AskStreamEventSchema, type AskStreamEvent } from '../domain/ask-stream.js';
+import { PublicUserSchema, type PublicUser } from '../domain/user.js';
 
 export type AskResponse = Pick<Response, 'ok' | 'status' | 'json'>;
 export type AskFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<AskResponse>;
 export type AskStreamFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type LoginFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<AskResponse>;
+
+export class UserLoginApiError extends Error {
+  constructor(readonly status?: number, options?: ErrorOptions) {
+    super('The user identity request failed.', options);
+    this.name = new.target.name;
+  }
+}
+
+export async function loginUser(nameInput: unknown, fetcher: LoginFetcher = fetch): Promise<PublicUser> {
+  if (typeof nameInput !== 'string') throw new UserLoginApiError();
+  let response: AskResponse;
+  try {
+    response = await fetcher('/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: nameInput }),
+    });
+  } catch (error) { throw new UserLoginApiError(undefined, { cause: error }); }
+  if (!response.ok) throw new UserLoginApiError(response.status);
+  try {
+    const parsed = PublicUserSchema.safeParse(await response.json());
+    if (!parsed.success) throw new UserLoginApiError(response.status, { cause: parsed.error });
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof UserLoginApiError) throw error;
+    throw new UserLoginApiError(response.status, { cause: error });
+  }
+}
 
 export interface AskStreamOptions {
   signal?: AbortSignal;

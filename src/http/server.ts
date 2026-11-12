@@ -12,6 +12,7 @@ export const DEFAULT_FRONTEND_ORIGINS = [
 
 export interface AskHttpServerOptions {
   allowedOrigins?: readonly string[];
+  login?: UserLoginHandler;
 }
 
 class ClientRequestError extends Error {
@@ -23,11 +24,12 @@ class ClientRequestError extends Error {
 
 export type AskHandler = (question: string) => Promise<AskResult>;
 export type AskStreamHandler = (question: string, signal: AbortSignal, emit: (update: AskStreamUpdate) => void) => Promise<AskResult>;
+export type UserLoginHandler = (input: unknown) => unknown | Promise<unknown>;
 
 export function createAskHttpServer(ask: AskHandler, options: AskHttpServerOptions = {}, askStream?: AskStreamHandler): Server {
   const allowedOrigins = new Set((options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS).map(normalizeConfiguredOrigin));
   return createServer((request, response) => {
-    void handleRequest(request, response, ask, allowedOrigins, askStream);
+    void handleRequest(request, response, ask, allowedOrigins, askStream, options.login);
   });
 }
 
@@ -54,6 +56,7 @@ async function handleRequest(
   ask: AskHandler,
   allowedOrigins: ReadonlySet<string>,
   askStream?: AskStreamHandler,
+  login?: UserLoginHandler,
 ): Promise<void> {
   const requestOrigin = request.headers.origin;
   if (requestOrigin !== undefined && !allowedOrigins.has(normalizeRequestOrigin(requestOrigin))) {
@@ -62,6 +65,37 @@ async function handleRequest(
   }
 
   const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
+  if (pathname === '/auth/login') {
+    if (request.method !== 'POST' || !login) {
+      sendJson(response, 404, { error: 'Route not found.' });
+      return;
+    }
+    if (!request.headers['content-type']?.toLowerCase().startsWith('application/json')) {
+      sendJson(response, 415, { error: 'Content-Type must be application/json.' });
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await readBody(request)) as unknown;
+    } catch (error) {
+      if (error instanceof ClientRequestError) {
+        sendJson(response, error.statusCode, { error: error.message });
+        return;
+      }
+      sendJson(response, 400, { error: 'Request body must contain valid JSON.' });
+      return;
+    }
+    try {
+      sendJson(response, 200, await login(payload));
+    } catch (error) {
+      if (error instanceof Error && error.name === 'ZodError') {
+        sendJson(response, 400, { error: 'Request must contain a valid name between 1 and 50 characters.' });
+        return;
+      }
+      sendJson(response, 500, { error: 'The user identity could not be selected due to a server error.' });
+    }
+    return;
+  }
   const streamRoute = pathname === '/ask/stream';
   if (request.method !== 'POST' || (pathname !== '/ask' && !streamRoute)) {
     sendJson(response, 404, { error: 'Route not found.' });
