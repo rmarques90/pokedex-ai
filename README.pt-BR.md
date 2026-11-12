@@ -18,7 +18,7 @@ As solicitações de embedding são enviadas ao OpenRouter; o banco fica em `sto
 
 **Idioma:** [English](README.md) | Português
 
-Projeto Node.js e TypeScript para uma Pokédex com recursos de IA. O repositório está preparado para crescer como um projeto multimódulo, com módulos separados para a API (`api/`) e o frontend (`fe/`).
+Projeto Node.js e TypeScript para uma Pokédex com recursos de IA. A API e o frontend React ficam no mesmo repositório; os módulos do frontend ficam em `src/fe/`.
 
 ## Requisitos
 
@@ -27,8 +27,8 @@ Projeto Node.js e TypeScript para uma Pokédex com recursos de IA. O repositóri
 
 Dependências do projeto:
 
-- **Execução:** [Zod](https://zod.dev/) para validação de dados
-- **Desenvolvimento:** TypeScript, `tsx` para executar TypeScript durante o desenvolvimento e `@types/node` para as definições de tipos do Node.js
+- **Execução:** React e React DOM para o frontend; [Zod](https://zod.dev/) para validação de dados; [LangChain](https://js.langchain.com/) e [OpenRouter](https://openrouter.ai/) para LLMs e embeddings; e [LanceDB](https://lancedb.github.io/lancedb/) para armazenamento vetorial local
+- **Desenvolvimento:** TypeScript, `tsx`, Vite e `concurrently`; `@types/node` e definições de tipos do React
 
 ## Instalação
 
@@ -40,13 +40,27 @@ npm install
 
 ## Execução
 
-Inicie a aplicação em modo de desenvolvimento:
+Inicie a API em modo de desenvolvimento:
 
 ```bash
 npm run dev
 ```
 
-Esse comando executa `src/index.ts`. O ponto de entrada é atualmente um placeholder.
+A API fica disponível em `http://localhost:3000`.
+
+Inicie somente o frontend:
+
+```bash
+npm run dev:fe
+```
+
+Inicie a API e o frontend juntos:
+
+```bash
+npm run dev:full
+```
+
+O frontend fica disponível em `http://localhost:5173` e encaminha as solicitações `/ask` para a API.
 
 Para executar a interface de linha de comando:
 
@@ -54,7 +68,7 @@ Para executar a interface de linha de comando:
 npm run cli
 ```
 
-Esse comando espera o arquivo `src/cli.ts`, que ainda não foi criado.
+Esse comando executa a CLI de pergunta única. Os fluxos de dados usam os scripts internos abaixo.
 
 ## Compilação e validação
 
@@ -70,6 +84,12 @@ Verifique os tipos sem gerar arquivos:
 npm run typecheck
 ```
 
+Gere a compilação de produção do frontend:
+
+```bash
+npm run build:fe
+```
+
 Execute os testes encontrados em `src/`:
 
 ```bash
@@ -79,9 +99,14 @@ npm test
 ## Estrutura atual
 
 ```text
-api/              reservado para o módulo da API
-fe/               reservado para o módulo do frontend
-src/index.ts      ponto de entrada TypeScript (placeholder)
+src/index.ts      ponto de entrada da API
+src/fe/           módulos do frontend React
+src/http/         fronteira HTTP
+src/domain/       tipos e schemas de validação
+src/service/      regras de negócio e integração de embeddings
+src/store/        persistência vetorial local com LanceDB
+src/scripts/      comandos internos de coleta e população
+specs/            especificações, planos e tarefas
 ```
 
 O projeto usa módulos ES (`type: module`) e TypeScript com alvo ES2022 e resolução de módulos NodeNext.

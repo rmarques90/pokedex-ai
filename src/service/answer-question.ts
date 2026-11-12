@@ -15,6 +15,7 @@ import type { PokemonAnswerGenerator } from './openrouter-chat-model.js';
 import type { PromptInjectionGuardrail } from './prompt-injection-guardrail.js';
 
 export const INITIAL_RETRIEVAL_TOP_K = 5;
+const INSUFFICIENT_EVIDENCE_ANSWER_PT = 'Os dados indexados não contêm informação suficiente para responder a esta pergunta.';
 export const INSUFFICIENT_EVIDENCE_ANSWER = 'The indexed Pokémon data does not contain enough information to answer this question.';
 
 export interface AnswerQuestionDependencies {
@@ -63,7 +64,11 @@ export async function answerQuestion(questionInput: unknown, dependencies: Answe
         : 'No matching Pokémon record is available in the indexed data.';
       return AskResultSchema.parse({ answer, abstained: true, sources: [] });
     }
-    return AskResultSchema.parse({ answer: INSUFFICIENT_EVIDENCE_ANSWER, abstained: true, sources: [] });
+    return AskResultSchema.parse({
+      answer: isPortuguese(question) ? INSUFFICIENT_EVIDENCE_ANSWER_PT : INSUFFICIENT_EVIDENCE_ANSWER,
+      abstained: true,
+      sources: [],
+    });
   }
 
   const guardedEvidence = dependencies.guardrail.checkEvidence(retrieved);

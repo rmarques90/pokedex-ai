@@ -12,16 +12,20 @@
 
 ## Commands
 - `dev` — `tsx src/index.ts` (API at `localhost:3000`).
+- `dev:fe` — `vite --host 127.0.0.1` (frontend at `localhost:5173`).
+- `dev:full` — start the API and frontend development servers together.
+- `build:fe` — `vite build`.
 - `cli` — `tsx src/cli.ts`.
 - `test` — `node --import tsx --test "src/**/*.test.ts"`.
 - `typecheck` — `tsc --noEmit`.
-- `populate_db` — populate LanceDB with initial data when needed (not configured in `package.json` yet).
+- `populate_db` — `tsx src/scripts/populate-vector-database.ts`.
 
 ## Structure
 - `src/domain/` — types and Zod schemas; no I/O.
 - `src/store/` — in-memory persistence behind an interface; LanceDB handles vector embeddings and search.
 - `src/service/` — business rules.
 - `src/http/` — HTTP boundary.
+- `src/fe/` — React frontend modules.
 - `src/cli.ts` — CLI entry point.
 - `specs/<NNN>/` — one directory per activity, containing `<NNN>-<slug>.md`, `<NNN>-plan.md`, and `tasks.md`.
 

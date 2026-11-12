@@ -2,7 +2,7 @@
 
 **Language:** English | [Português](README.pt-BR.md)
 
-A Node.js and TypeScript project for an AI-powered Pokédex. The repository is designed to grow into a multi-module project with separate modules for the API (`api/`) and frontend (`fe/`).
+A Node.js and TypeScript project for an AI-powered Pokédex. The API and React frontend are kept in one repository; frontend modules live in `src/fe/`.
 
 ## Requirements
 
@@ -11,8 +11,8 @@ A Node.js and TypeScript project for an AI-powered Pokédex. The repository is d
 
 Project dependencies:
 
-- **Runtime:** [Zod](https://zod.dev/) for data validation, [LangChain](https://js.langchain.com/) and [OpenRouter](https://openrouter.ai/) for embeddings, and [LanceDB](https://lancedb.github.io/lancedb/) for local vector storage
-- **Development:** TypeScript, `tsx` for running TypeScript during development, and `@types/node` for Node.js type definitions
+- **Runtime:** React and React DOM for the frontend; [Zod](https://zod.dev/) for data validation; [LangChain](https://js.langchain.com/) and [OpenRouter](https://openrouter.ai/) for LLMs and embeddings; and [LanceDB](https://lancedb.github.io/lancedb/) for local vector storage
+- **Development:** TypeScript, `tsx`, Vite, and `concurrently`; `@types/node` and React type definitions
 
 ## Installation
 
@@ -24,13 +24,27 @@ npm install
 
 ## Run
 
-Start the application in development mode:
+Start the API in development mode:
 
 ```bash
 npm run dev
 ```
 
-This command runs `src/index.ts`. The entry point is currently a placeholder.
+The API listens at `http://localhost:3000`.
+
+Start the frontend by itself:
+
+```bash
+npm run dev:fe
+```
+
+Start the API and frontend together:
+
+```bash
+npm run dev:full
+```
+
+The frontend runs at `http://localhost:5173` and proxies `/ask` requests to the API.
 
 To run the command-line interface:
 
@@ -38,7 +52,7 @@ To run the command-line interface:
 npm run cli
 ```
 
-This command expects `src/cli.ts`; the current data workflows use the internal scripts below.
+This command runs the one-shot CLI. The current data workflows use the internal scripts below.
 
 ## Collect and populate Pokemon data
 
@@ -84,6 +98,12 @@ Check types without generating output files:
 npm run typecheck
 ```
 
+Build the frontend for production:
+
+```bash
+npm run build:fe
+```
+
 Run tests found in `src/`:
 
 ```bash
@@ -93,10 +113,10 @@ npm test
 ## Current structure
 
 ```text
-api/              reserved for the API module
-fe/               reserved for the frontend module
-src/index.ts      TypeScript entry point (placeholder)
+src/index.ts      API entry point
+src/fe/            React frontend modules
 src/domain/       data types and validation schemas
+src/http/         HTTP boundary
 src/service/      business rules and embedding integration
 src/store/        local LanceDB persistence
 src/scripts/      internal data collection and population commands

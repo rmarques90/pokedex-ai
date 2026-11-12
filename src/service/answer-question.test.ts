@@ -137,6 +137,18 @@ test('abstains without calling the model when the collection returns no evidence
   assert.equal(fixture.modelCalls, 0);
 });
 
+test('localizes the fixed insufficient-evidence answer to the Portuguese question language', async () => {
+  const question = 'Qual informação existe sobre esse Pokémon?';
+  const fixture = dependencies({ question, evidence: [] });
+  const result = await answerQuestion(question, fixture.dependencies);
+  assert.deepEqual(result, {
+    answer: 'Os dados indexados não contêm informação suficiente para responder a esta pergunta.',
+    abstained: true,
+    sources: [],
+  });
+  assert.equal(fixture.modelCalls, 0);
+});
+
 test('returns a model abstention without citations', async () => {
   const fixture = dependencies({ generated: { answer: 'The indexed data is insufficient.', abstained: true, usedPokemonIds: [] } });
   const result = await answerQuestion('Why does the seed grow?', fixture.dependencies);
