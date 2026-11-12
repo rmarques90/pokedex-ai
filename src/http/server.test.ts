@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import type { Server } from 'node:http';
 import test from 'node:test';
 import { PromptGuardrailError, PromptSafetyModelError, type AskResult } from '../domain/ask.js';
-import { createAskHttpServer } from './server.js';
+import { createAskHttpServer, type AskHttpServerOptions } from './server.js';
 
 const success: AskResult = {
   answer: 'Bulbasaur is a Grass and Poison Pokémon.',
@@ -11,8 +11,12 @@ const success: AskResult = {
   sources: [{ pokemonId: 1, pokemonName: 'bulbasaur', url: 'https://bulbapedia.bulbagarden.net/wiki/Bulbasaur_(Pok%C3%A9mon)' }],
 };
 
-async function withServer<T>(ask: (question: string) => Promise<AskResult>, callback: (baseUrl: string) => Promise<T>): Promise<T> {
-  const server = createAskHttpServer(ask);
+async function withServer<T>(
+  ask: (question: string) => Promise<AskResult>,
+  callback: (baseUrl: string) => Promise<T>,
+  options?: AskHttpServerOptions,
+): Promise<T> {
+  const server = createAskHttpServer(ask, options);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -38,6 +42,40 @@ test('POST /ask returns the answer and source URLs', async () => {
     assert.deepEqual(await response.json(), success);
     assert.equal(receivedQuestion, 'What type is Bulbasaur?');
   });
+});
+
+test('accepts a request from an exactly allowed frontend origin', async () => {
+  let calls = 0;
+  await withServer(async () => { calls += 1; return success; }, async (baseUrl) => {
+    const response = await post(baseUrl, JSON.stringify({ question: 'What type is Bulbasaur?' }), {
+      'content-type': 'application/json',
+      origin: 'http://127.0.0.1:5173',
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), success);
+    assert.equal(calls, 1);
+  }, { allowedOrigins: ['http://127.0.0.1:5173'] });
+});
+
+test('rejects unlisted, lookalike, null, and malformed origins before reading the request body or invoking the service', async () => {
+  let calls = 0;
+  const disallowedOrigins = [
+    'http://untrusted.example',
+    'http://127.0.0.1:5173.attacker.example',
+    'null',
+    'not-an-origin',
+  ];
+  await withServer(async () => { calls += 1; return success; }, async (baseUrl) => {
+    for (const origin of disallowedOrigins) {
+      const response = await post(baseUrl, '{invalid json', {
+        'content-type': 'application/json',
+        origin,
+      });
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: 'Request origin is not allowed.' });
+    }
+    assert.equal(calls, 0);
+  }, { allowedOrigins: ['http://127.0.0.1:5173'] });
 });
 
 test('POST /ask returns an expected abstention with no sources', async () => {

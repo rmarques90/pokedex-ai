@@ -62,7 +62,7 @@ test('CLI and HTTP use the same composed answer service and return consistent re
     assert.ok(address && typeof address !== 'string');
     const httpResponse = await fetch(`http://127.0.0.1:${address.port}/ask`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:5173' },
       body: JSON.stringify({ question: 'What type is Bulbasaur?' }),
     });
     const httpResult: unknown = await httpResponse.json();

@@ -3,18 +3,21 @@ import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
 import { createAskService, loadLocalEnvironment, type AskService } from './config/ask-runtime.js';
 import { AskDomainError } from './domain/ask.js';
-import { listenAskHttpServer } from './http/server.js';
+import { DEFAULT_FRONTEND_ORIGINS, listenAskHttpServer } from './http/server.js';
 
 export interface ApiServerOptions {
   service?: AskService;
   environment?: NodeJS.ProcessEnv;
   port?: number;
   host?: string;
+  allowedOrigins?: readonly string[];
 }
 
 export async function startApiServer(options: ApiServerOptions = {}): Promise<Server> {
   const service = options.service ?? await createAskService({ environment: options.environment ?? process.env });
-  return listenAskHttpServer(service.ask, options.port ?? 3000, options.host ?? '127.0.0.1');
+  return listenAskHttpServer(service.ask, options.port ?? 3000, options.host ?? '127.0.0.1', {
+    allowedOrigins: options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS,
+  });
 }
 
 async function main(): Promise<void> {

@@ -70,7 +70,7 @@ export function App({ ask = askPokemon }: { ask?: AskAction }) {
             <div className="hero-copy"><span className="hero-kicker">POKÉDEX AI <i>✦</i></span><h2>{copy.heroTitle}</h2><p>{copy.heroSubtitle}</p><span className="pokemon-badge">{copy.pokemonBadge}</span></div>
             <div className="hero-art"><div className="sun-orb"/><div className="hero-circle"/><img src="/charmander.png" alt="Charmander"/><span className="sparkle sparkle-one">✦</span><span className="sparkle sparkle-two">✧</span></div>
           </section>
-          <div className="suggested-chips" aria-label={copy.suggestedQuestions}>{suggestions.map((item, index) => <button key={item} onClick={() => setQuestion(item)}><span>{['✧', '◈', '⌁'][index]}</span>{item}</button>)}</div>
+          <div className="suggested-chips" aria-label={copy.suggestedQuestions}>{suggestions.map((item, index) => <button key={item} onClick={() => void submit(undefined, item)}><span>{['✧', '◈', '⌁'][index]}</span>{item}</button>)}</div>
           <form className="question-form" onSubmit={submit}>
             <label htmlFor="question-input">{copy.questionLabel}</label>
             <div className="input-row"><textarea id="question-input" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={copy.questionPlaceholder} rows={2} disabled={loading} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} /><button type="submit" disabled={loading || !question.trim()}>{loading ? <span className="spinner"/> : <span>✦</span>}{copy.ask}</button></div>

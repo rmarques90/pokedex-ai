@@ -46,6 +46,12 @@ npm run dev:full
 
 The frontend runs at `http://localhost:5173` and proxies `/ask` requests to the API.
 
+### Local API access
+
+The development API listens on the loopback address `127.0.0.1` by default. Browser requests to `POST /ask` are accepted when their `Origin` exactly matches `http://127.0.0.1:5173` or `http://localhost:5173`; the Vite proxy forwards the request to the API. Requests without an `Origin` header are also allowed for local maintenance.
+
+This origin check limits browser requests from unrelated websites. It is not authentication: local scripts can call the loopback API directly, omit the header, or forge an allowed `Origin`. Do not expose this proof-of-concept API to a network or treat this local rule as production security.
+
 To run the command-line interface:
 
 ```bash

@@ -25,13 +25,16 @@ test('renders the Portuguese page and accessible question controls by default', 
   render(<App ask={async () => answer} />);
   assert.ok(screen.getByRole('heading', { name: 'Uma pergunta. Novas descobertas.' }));
   assert.ok(screen.getByLabelText('Sua pergunta'));
-  assert.ok(screen.getByRole('combobox', { name: 'Language' }));
+  assert.ok(screen.getByRole('group', { name: 'Idioma da interface' }));
+  assert.ok(screen.getByRole('button', { name: 'Portugu\u00eas' }));
+  assert.ok(screen.getByRole('button', { name: 'English' }));
+  assert.equal(document.querySelectorAll('.language-flag').length, 2);
   assert.ok(screen.getByRole('button', { name: /Perguntar/ }));
 });
 
 test('switches the interface to English, persists it, and restores it on a new render', () => {
   const first = render(<App ask={async () => answer} />);
-  fireEvent.change(screen.getByRole('combobox', { name: 'Language' }), { target: { value: 'en' } });
+  fireEvent.click(screen.getByRole('button', { name: 'English' }));
   assert.ok(screen.getByRole('heading', { name: 'One question. New discoveries.' }));
   assert.equal(window.localStorage.getItem('pokedex-ai.language'), 'en');
   first.unmount();
@@ -39,16 +42,38 @@ test('switches the interface to English, persists it, and restores it on a new r
   assert.ok(screen.getByRole('heading', { name: 'One question. New discoveries.' }));
 });
 
-test('suggested questions fill the composer and keyboard Enter submits its current text', async () => {
+test('sidebar suggested questions submit immediately', async () => {
   const asked: string[] = [];
   render(<App ask={async (question) => { asked.push(question); return answer; }} />);
-  fireEvent.click(screen.getAllByRole('button', { name: /Qual é o Pokémon número 3/ })[0]!);
+  const suggestion = document.querySelector('.suggestions button:nth-child(2)');
+  assert.ok(suggestion);
+  const expectedQuestion = suggestion.childNodes[0]?.textContent?.trim() ?? '';
+  fireEvent.click(suggestion);
+  await waitFor(() => assert.equal(asked.length, 1));
+  assert.equal(asked[0], expectedQuestion);
+  await waitFor(() => assert.equal(document.querySelector('.asked-question')?.textContent, expectedQuestion));
+});
+
+test('suggested chips submit immediately', async () => {
+  const asked: string[] = [];
+  render(<App ask={async (question) => { asked.push(question); return answer; }} />);
+  const suggestion = document.querySelector('.suggested-chips button:nth-child(1)');
+  assert.ok(suggestion);
+  const expectedQuestion = suggestion.lastChild?.textContent?.trim() ?? '';
+  fireEvent.click(suggestion);
+  await waitFor(() => assert.equal(asked.length, 1));
+  assert.equal(asked[0], expectedQuestion);
+  await waitFor(() => assert.equal(document.querySelector('.asked-question')?.textContent, expectedQuestion));
+});
+
+test('keyboard Enter submits the current text', async () => {
+  const asked: string[] = [];
+  render(<App ask={async (question) => { asked.push(question); return answer; }} />);
   const input = screen.getByRole('textbox', { name: 'Sua pergunta' });
-  assert.equal((input as HTMLTextAreaElement).value, 'Qual é o Pokémon número 3?');
-  fireEvent.change(input, { target: { value: '  Qual Pokémon é o número 3?  ' } });
+  fireEvent.change(input, { target: { value: '  Manual question?  ' } });
   fireEvent.keyDown(input, { key: 'Enter' });
   await waitFor(() => assert.equal(asked.length, 1));
-  assert.equal(asked[0], 'Qual Pokémon é o número 3?');
+  assert.equal(asked[0], 'Manual question?');
 });
 
 test('prevents empty submission without calling the API', () => {
@@ -107,7 +132,7 @@ test('labels an abstained response as insufficient evidence', async () => {
 
 test('reload starts without prior query/result but keeps language preference', async () => {
   const view = render(<App ask={async () => answer} />);
-  fireEvent.change(screen.getByRole('combobox', { name: 'Language' }), { target: { value: 'en' } });
+  fireEvent.click(screen.getByRole('button', { name: 'English' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Your question' }), { target: { value: 'Question' } });
   fireEvent.click(screen.getByRole('button', { name: /Ask/ }));
   await screen.findByText(answer.answer);
@@ -115,5 +140,5 @@ test('reload starts without prior query/result but keeps language preference', a
   render(<App ask={async () => answer} />);
   assert.equal((screen.getByRole('textbox', { name: 'Your question' }) as HTMLTextAreaElement).value, '');
   assert.equal(screen.queryByText(answer.answer), null);
-  assert.equal((screen.getByRole('combobox', { name: 'Language' }) as HTMLSelectElement).value, 'en');
+  assert.equal(screen.getByRole('button', { name: 'English' }).getAttribute('aria-pressed'), 'true');
 });
