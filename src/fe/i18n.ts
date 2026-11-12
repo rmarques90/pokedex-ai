@@ -68,11 +68,38 @@ export function isLanguage(value: unknown): value is Language {
   return typeof value === 'string' && SUPPORTED_LANGUAGES.some((language) => language === value);
 }
 
-export function readLanguagePreference(storage: Pick<LanguageStorage, 'getItem'> | null = getBrowserStorage()): Language {
+export interface BrowserLanguagePreferences {
+  languages?: readonly string[] | null;
+  language?: string | null;
+}
+
+export function detectBrowserLanguage(preferences: BrowserLanguagePreferences | null = getBrowserLanguagePreferences()): Language {
+  if (!preferences) return 'pt';
+
+  const preferredLanguages = preferences.languages?.length
+    ? preferences.languages
+    : preferences.language ? [preferences.language] : [];
+
+  for (const tag of preferredLanguages) {
+    if (typeof tag !== 'string') continue;
+    const normalizedTag = tag.trim();
+    if (!/^(pt|en)(?:-[a-z0-9]{1,8})*$/i.test(normalizedTag)) continue;
+    const primarySubtag = normalizedTag.split('-', 1)[0]?.toLowerCase();
+    if (primarySubtag === 'pt' || primarySubtag === 'en') return primarySubtag;
+  }
+
+  return 'pt';
+}
+
+export function readLanguagePreference(
+  storage: Pick<LanguageStorage, 'getItem'> | null = getBrowserStorage(),
+  browserPreferences: BrowserLanguagePreferences | null = getBrowserLanguagePreferences(),
+): Language {
   try {
     const value = storage?.getItem(LANGUAGE_STORAGE_KEY);
-    return isLanguage(value) ? value : 'pt';
-  } catch { return 'pt'; }
+    if (isLanguage(value)) return value;
+  } catch { /* Use the browser language when storage is unavailable. */ }
+  return detectBrowserLanguage(browserPreferences);
 }
 
 export function saveLanguagePreference(language: Language, storage: Pick<LanguageStorage, 'setItem'> | null = getBrowserStorage()): void {
@@ -81,4 +108,12 @@ export function saveLanguagePreference(language: Language, storage: Pick<Languag
 
 function getBrowserStorage(): LanguageStorage | null {
   try { return typeof window === 'undefined' ? null : window.localStorage; } catch { return null; }
+}
+
+function getBrowserLanguagePreferences(): BrowserLanguagePreferences | null {
+  try {
+    return typeof navigator === 'undefined'
+      ? null
+      : { languages: navigator.languages, language: navigator.language };
+  } catch { return null; }
 }

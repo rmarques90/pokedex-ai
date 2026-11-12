@@ -37,6 +37,9 @@ export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
     ? ['Quais tipos s\u00e3o fortes contra fogo?', 'Qual \u00e9 o Pok\u00e9mon n\u00famero 3?', 'Conte uma curiosidade sobre Charmander.']
     : ['Which types are strong against Fire?', 'Which Pok\u00e9mon is number 3?', 'Tell me a fact about Charmander.'];
 
+  useEffect(() => {
+    document.documentElement.lang = language === 'pt' ? 'pt-BR' : 'en';
+  }, [language]);
   useEffect(() => () => activeRequest.current?.abort(), []);
   useEffect(() => {
     if (!selectedEntry) return;
