@@ -117,7 +117,11 @@ export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
     return [...groups.entries()].map(([id, entries]) => ({ id, entries: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), latest: entries.reduce((latest, entry) => entry.createdAt > latest ? entry.createdAt : latest, '') }))
       .sort((a, b) => b.latest.localeCompare(a.latest));
   }, [history.entries]);
-  const transcript = history.entries.filter((entry) => entry.conversationId === history.activeConversationId).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const transcript = history.entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.conversationId === history.activeConversationId)
+    .sort((a, b) => b.entry.createdAt.localeCompare(a.entry.createdAt) || b.index - a.index)
+    .map(({ entry }) => entry);
 
   return (
     <div className="app-shell">
@@ -154,12 +158,15 @@ export function App({ ask = askPokemonStream }: { ask?: AskAction }) {
             <div className="form-hint"><span aria-hidden="true">{String.fromCodePoint(0x21b5)}</span> {copy.keyboardHint}</div>
           </form>
           {storageWarning && <div className="storage-warning" role="status">{copy.storageWarning}</div>}
+          {loading && <article className="chat-turn pending-turn">
+            <div className="chat-question"><span className="chat-avatar">{language === 'pt' ? 'Voc\u00ea' : 'You'}</span><p>{submittedQuestion}</p></div>
+            <div className="state-card" role="status"><span className="spinner dark"/>{retryAttempt > 0 ? copy.retrying.replace('{attempt}', String(retryAttempt)) : copy.loading}<button className="cancel-button" type="button" onClick={cancel}>{copy.cancel}</button></div>
+            {streamingAnswer.length > 0 && <section className="answer-card stream-preview" aria-live="polite"><div className="answer-top"><div className="answer-icon">{'\u2726'}</div><div><span className="answer-brand">{copy.answerLabel}</span></div></div><div className="answer-body"><p>{streamingAnswer}</p></div></section>}
+          </article>}
           {transcript.map((entry) => <article className="chat-turn" key={entry.id}>
             <div className="chat-question"><span className="chat-avatar">{language === 'pt' ? 'Voc\u00ea' : 'You'}</span><p>{entry.question}</p></div>
             <AnswerCard entry={entry} copy={copy} />
           </article>)}
-          {loading && <div className="state-card" role="status"><span className="spinner dark"/>{retryAttempt > 0 ? copy.retrying.replace('{attempt}', String(retryAttempt)) : copy.loading}<button className="cancel-button" type="button" onClick={cancel}>{copy.cancel}</button></div>}
-          {loading && streamingAnswer.length > 0 && <section className="answer-card stream-preview" aria-live="polite"><div className="answer-top"><div className="answer-icon">{'\u2726'}</div><div><span className="answer-brand">{copy.answerLabel}</span><p className="asked-question">{submittedQuestion}</p></div></div><div className="answer-body"><p>{streamingAnswer}</p></div></section>}
           {error && <div className="state-card error-card" role="alert"><span>!</span><div><strong>{copy.requestError}</strong><button onClick={() => void submit()}>{copy.retry}</button></div></div>}
           <footer className="page-footer"><span>{'Pok\u00e9dex AI'} <b>{'\u00b7'}</b> {language === 'pt' ? 'Feito para curiosos' : 'Made for curious trainers'}</span><span>{'\u2726'}</span></footer>
         </div>

@@ -9,8 +9,8 @@ import {
 } from './i18n.js';
 
 test('defaults to Portuguese when no preference is stored', () => {
-  assert.equal(readLanguagePreference(null), 'pt');
-  assert.equal(readLanguagePreference({ getItem: () => null }), 'pt');
+  assert.equal(readLanguagePreference(null, null), 'pt');
+  assert.equal(readLanguagePreference({ getItem: () => null }, null), 'pt');
 });
 
 test('restores a supported language preference', () => {
@@ -18,7 +18,7 @@ test('restores a supported language preference', () => {
 });
 
 test('ignores an unsupported language preference', () => {
-  assert.equal(readLanguagePreference({ getItem: () => 'fr' }), 'pt');
+  assert.equal(readLanguagePreference({ getItem: () => 'fr' }, null), 'pt');
   assert.equal(isLanguage('pt'), true);
   assert.equal(isLanguage('en'), true);
   assert.equal(isLanguage('fr'), false);
@@ -42,6 +42,6 @@ test('keeps localization keys aligned between Portuguese and English', () => {
 });
 
 test('continues using the Portuguese default when local storage throws', () => {
-  assert.equal(readLanguagePreference({ getItem: () => { throw new Error('storage unavailable'); } }), 'pt');
+  assert.equal(readLanguagePreference({ getItem: () => { throw new Error('storage unavailable'); } }, null), 'pt');
   assert.doesNotThrow(() => saveLanguagePreference('en', { setItem: () => { throw new Error('storage unavailable'); } }));
 });

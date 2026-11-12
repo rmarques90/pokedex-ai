@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, afterEach, test } from 'node:test';
+import { after, afterEach, beforeEach, test } from 'node:test';
 import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
@@ -12,12 +12,14 @@ Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: tr
 
 const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const { App } = await import('./App.js');
+const { HISTORY_STORAGE_KEY } = await import('./history-store.js');
 const answer = {
   answer: 'Fire Pokémon are weak against Water, Ground, and Rock attacks.',
   abstained: false,
   sources: [{ pokemonId: 4, pokemonName: 'charmander', url: 'https://pokeapi.co/api/v2/pokemon/4/' }],
 };
 
+beforeEach(() => { window.localStorage.setItem('pokedex-ai.language', 'pt'); });
 afterEach(() => { cleanup(); window.localStorage.clear(); });
 after(() => dom.window.close());
 
@@ -99,6 +101,107 @@ test('shows a loading status and prevents duplicate submits until the request fi
   assert.equal(calls, 1);
   finish(answer);
   await screen.findByText(answer.answer);
+});
+
+test('shows completed turns newest-first while keeping each answer, sources, and status with its question', async () => {
+  render(<App ask={async (question) => question === 'First question'
+    ? { ...answer, answer: 'First answer' }
+    : { answer: 'Second answer', abstained: false, sources: [] }} />);
+  const input = screen.getByRole('textbox', { name: 'Sua pergunta' });
+  const form = screen.getByRole('button', { name: /Perguntar/ }).closest('form')!;
+
+  fireEvent.change(input, { target: { value: 'First question' } });
+  fireEvent.submit(form);
+  await screen.findByText('First answer');
+  fireEvent.change(input, { target: { value: 'Second question' } });
+  fireEvent.submit(form);
+  await screen.findByText('Second answer');
+
+  const turns = Array.from(document.querySelectorAll('.chat-turn'));
+  assert.deepEqual(turns.map((turn) => turn.querySelector('.chat-question p')?.textContent), ['Second question', 'First question']);
+  assert.ok(turns[0]?.textContent?.includes('Second answer'));
+  assert.ok(turns[0]?.textContent?.includes('conhecimento geral do modelo'));
+  assert.equal(turns[0]?.querySelector('.sources'), null);
+  assert.ok(turns[1]?.textContent?.includes('First answer'));
+  assert.ok(turns[1]?.querySelector(`a[href="${answer.sources[0].url}"]`));
+});
+
+test('keeps the submitted question and stream preview in the top pending turn, then replaces it once', async () => {
+  let finish!: (value: typeof answer) => void;
+  render(<App ask={(question, options) => {
+    if (question === 'Earlier question') return Promise.resolve({ ...answer, answer: 'Earlier answer' });
+    options?.onDelta?.('Streaming answer');
+    return new Promise((resolve) => { finish = resolve; });
+  }} />);
+  const input = screen.getByRole('textbox', { name: 'Sua pergunta' });
+  const form = screen.getByRole('button', { name: /Perguntar/ }).closest('form')!;
+  fireEvent.change(input, { target: { value: 'Earlier question' } });
+  fireEvent.submit(form);
+  await screen.findByText('Earlier answer');
+  fireEvent.change(input, { target: { value: 'Latest question' } });
+  fireEvent.submit(form);
+
+  const pending = document.querySelector('.chat-turn.pending-turn');
+  assert.ok(pending);
+  assert.equal(pending.querySelector('.chat-question p')?.textContent, 'Latest question');
+  assert.ok(pending.querySelector('[role="status"]'));
+  assert.ok(pending.querySelector('.stream-preview')?.textContent?.includes('Streaming answer'));
+  assert.equal(document.querySelectorAll('.chat-turn')[1]?.querySelector('.chat-question p')?.textContent, 'Earlier question');
+
+  finish({ ...answer, answer: 'Latest final answer' });
+  await screen.findByText('Latest final answer');
+  assert.equal(document.querySelector('.pending-turn'), null);
+  assert.deepEqual(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).map((node) => node.textContent), ['Latest question', 'Earlier question']);
+  assert.equal(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).filter((node) => node.textContent === 'Latest question').length, 1);
+});
+
+test('uses append order to break equal timestamps and leaves stored and sidebar history order unchanged', () => {
+  const conversationId = '00000000-0000-4000-8000-000000000001';
+  const timestamp = '2026-01-01T12:00:00.000Z';
+  const entries = [
+    { id: '00000000-0000-4000-8000-000000000002', conversationId, createdAt: timestamp, question: 'Earlier appended question', result: { ...answer, answer: 'Earlier appended answer' } },
+    { id: '00000000-0000-4000-8000-000000000003', conversationId, createdAt: timestamp, question: 'Later appended question', result: { ...answer, answer: 'Later appended answer' } },
+  ];
+  window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify({ version: 1, activeConversationId: conversationId, entries }));
+  render(<App ask={async () => answer} />);
+
+  assert.deepEqual(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).map((node) => node.textContent), ['Later appended question', 'Earlier appended question']);
+  assert.deepEqual(Array.from(document.querySelectorAll('.history-entry > span')).map((node) => node.textContent), ['Earlier appended question', 'Later appended question']);
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(HISTORY_STORAGE_KEY)!).entries.map((entry: { question: string }) => entry.question), ['Earlier appended question', 'Later appended question']);
+});
+
+test('failure, retry, and cancellation do not change previously completed turns', async () => {
+  let calls = 0;
+  let finishCancelled!: (value: typeof answer) => void;
+  render(<App ask={(question) => {
+    if (question === 'Saved question') return Promise.resolve({ ...answer, answer: 'Saved answer' });
+    calls += 1;
+    if (calls === 1) return Promise.reject(new Error('network'));
+    if (calls === 2) return Promise.resolve({ ...answer, answer: 'Recovered answer' });
+    return new Promise((resolve) => { finishCancelled = resolve; });
+  }} />);
+  const input = screen.getByRole('textbox', { name: 'Sua pergunta' });
+  const form = screen.getByRole('button', { name: /Perguntar/ }).closest('form')!;
+  fireEvent.change(input, { target: { value: 'Saved question' } });
+  fireEvent.submit(form);
+  await screen.findByText('Saved answer');
+
+  fireEvent.change(input, { target: { value: 'Retry question' } });
+  fireEvent.submit(form);
+  await screen.findByRole('alert');
+  assert.deepEqual(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).map((node) => node.textContent), ['Saved question']);
+  fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
+  await screen.findByText('Recovered answer');
+  assert.deepEqual(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).map((node) => node.textContent), ['Retry question', 'Saved question']);
+
+  fireEvent.change(input, { target: { value: 'Canceled question' } });
+  fireEvent.submit(form);
+  assert.deepEqual(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).map((node) => node.textContent), ['Canceled question', 'Retry question', 'Saved question']);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+  assert.deepEqual(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).map((node) => node.textContent), ['Retry question', 'Saved question']);
+  assert.deepEqual(Array.from(document.querySelectorAll('.history-entry > span')).map((node) => node.textContent), ['Retry question', 'Saved question']);
+  finishCancelled(answer);
+  await waitFor(() => assert.equal(screen.queryByRole('status'), null));
 });
 
 test('renders streamed text immediately and cancels the active request', async () => {
