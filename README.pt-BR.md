@@ -20,6 +20,12 @@ As solicitações de embedding são enviadas ao OpenRouter; o banco fica em `sto
 
 Projeto Node.js e TypeScript para uma Pokédex com recursos de IA. A API e o frontend React ficam no mesmo repositório; os módulos do frontend ficam em `src/fe/`.
 
+## Demonstração da interface
+
+Esta captura estática da página inicial demonstra a interface do projeto:
+
+![Exemplo estático da página inicial do Pokédex AI](homepage_sample.png)
+
 ## Requisitos
 
 - Node.js 22 ou superior
@@ -61,6 +67,13 @@ npm run dev:full
 ```
 
 O frontend fica disponível em `http://localhost:5173` e encaminha as solicitações `/ask` para a API.
+
+### Perguntas e respostas
+
+A API procura evidências no índice local primeiro. Quando os dados indexados não são suficientes, o modelo pode responder usando conhecimento geral do universo Pokémon; nesse caso, a interface identifica a resposta como conhecimento geral e não exibe referências do RAG.
+
+- `POST /ask` mantém o fluxo JSON para a CLI e outros clientes.
+- `POST /ask/stream` envia eventos SSE para a interface web mostrar o texto progressivamente. A interface permite cancelar a chamada e tenta novamente falhas transitórias até três vezes após a tentativa inicial.
 
 Para executar a interface de linha de comando:
 

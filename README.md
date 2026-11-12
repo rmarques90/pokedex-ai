@@ -4,6 +4,12 @@
 
 A Node.js and TypeScript project for an AI-powered Pokédex. The API and React frontend are kept in one repository; frontend modules live in `src/fe/`.
 
+## UI preview
+
+The repository includes this static homepage sample to demonstrate the project's interface:
+
+![Static sample of the Pokédex AI homepage](homepage_sample.png)
+
 ## Requirements
 
 - Node.js 22 or later
@@ -55,7 +61,7 @@ The web UI uses `/ask/stream`, renders answer text as it arrives, and offers a c
 
 ### Local API access
 
-The development API listens on the loopback address `127.0.0.1` by default. Browser requests to `POST /ask` are accepted when their `Origin` exactly matches `http://127.0.0.1:5173` or `http://localhost:5173`; the Vite proxy forwards the request to the API. Requests without an `Origin` header are also allowed for local maintenance.
+The development API listens on the loopback address `127.0.0.1` by default. Browser requests to `POST /ask` and `POST /ask/stream` are accepted when their `Origin` exactly matches `http://127.0.0.1:5173` or `http://localhost:5173`; the Vite proxy forwards the request to the API. Requests without an `Origin` header are also allowed for local maintenance.
 
 This origin check limits browser requests from unrelated websites. It is not authentication: local scripts can call the loopback API directly, omit the header, or forge an allowed `Origin`. Do not expose this proof-of-concept API to a network or treat this local rule as production security.
 
