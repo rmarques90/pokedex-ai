@@ -11,6 +11,7 @@ import {
   type RetrievedEvidence,
 } from '../domain/ask.js';
 import { EMBEDDING_DIMENSIONS } from '../constants.js';
+import { PokemonTypeDetailsSchema } from '../domain/pokemon-vector-document.js';
 
 const STAGING_PREFIX = '__pokedex_ai_stage_';
 const BACKUP_PREFIX = '__pokedex_ai_backup_';
@@ -193,7 +194,8 @@ function toRetrievedEvidence(rawRow: unknown): RetrievedEvidence {
   const candidate = rawRow as Record<string, unknown>;
   const row = PokemonVectorRowSchema.parse(normalizeRow(candidate));
   const distance = candidate._distance;
-  const sources = [row.descriptionSourceUrl, row.pokemonUrl, row.speciesUrl]
+  const typeDetails = z.array(PokemonTypeDetailsSchema).min(1).max(2).parse(JSON.parse(row.typeDetails));
+  const sources = [row.descriptionSourceUrl, row.pokemonUrl, row.speciesUrl, ...typeDetails.map(({ url }) => url)]
     .filter((url, index, all) => all.indexOf(url) === index)
     .map((url) => ({ pokemonId: row.id, pokemonName: row.name, url }));
   return RetrievedEvidenceSchema.parse({
@@ -201,6 +203,7 @@ function toRetrievedEvidence(rawRow: unknown): RetrievedEvidence {
     text: row.text,
     pokemonName: row.name,
     types: row.types,
+    typeDetails,
     total: row.total,
     sources,
     ...(typeof distance === 'number' && Number.isFinite(distance) ? { score: distance } : {}),

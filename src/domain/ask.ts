@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CollectionNameSchema } from './pokemon-vector-document.js';
+import { CollectionNameSchema, PokemonTypeDetailsSchema } from './pokemon-vector-document.js';
 
 export const AskQuestionSchema = z.string().trim().min(1, 'Question must not be empty');
 export type AskQuestion = z.infer<typeof AskQuestionSchema>;
@@ -19,6 +19,7 @@ export const RetrievedEvidenceSchema = z.object({
   text: z.string().min(1),
   pokemonName: z.string().trim().min(1),
   types: z.array(z.string().trim().min(1)).min(1).max(2),
+  typeDetails: z.array(PokemonTypeDetailsSchema).min(1).max(2).optional(),
   total: z.number().int().nonnegative(),
   sources: z.array(AskSourceSchema).min(1),
   score: z.number().finite().optional(),

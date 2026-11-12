@@ -8,16 +8,17 @@ import {
   CollectionNameSchema,
 } from './pokemon-vector-document.js';
 import { checkProtectedChanges } from '../scripts/pre-commit-guard.js';
+import { addEmptyTypeRelations } from '../test-helpers/pokemon-dataset.js';
 
 const datasetPath = new URL('../../store/data/pokemon.json', import.meta.url);
 
 test('validates the generated 151-record Pokemon dataset', async () => {
-  const dataset: unknown = JSON.parse(await readFile(datasetPath, 'utf8'));
+  const dataset: unknown = addEmptyTypeRelations(JSON.parse(await readFile(datasetPath, 'utf8')));
   assert.equal(PokemonDatasetSchema.safeParse(dataset).success, true);
 });
 
 test('rejects missing, malformed, duplicate, and out-of-range datasets', async () => {
-  const records: unknown = JSON.parse(await readFile(datasetPath, 'utf8'));
+  const records: unknown = addEmptyTypeRelations(JSON.parse(await readFile(datasetPath, 'utf8')));
   assert.ok(Array.isArray(records));
   assert.equal(PokemonDatasetSchema.safeParse(records.slice(1)).success, false);
   assert.equal(PokemonDatasetSchema.safeParse([...records.slice(0, 150), records[149]]).success, false);
@@ -27,13 +28,25 @@ test('rejects missing, malformed, duplicate, and out-of-range datasets', async (
   assert.equal(PokemonDatasetSchema.safeParse('not-json-data').success, false);
 });
 
+test('requires complete current type relations and generation-labeled historical relations', async () => {
+  const records: unknown = addEmptyTypeRelations(JSON.parse(await readFile(datasetPath, 'utf8')));
+  assert.ok(Array.isArray(records));
+  const first = records[0] as Record<string, unknown>;
+  const typeDetails = first.typeDetails as Array<Record<string, unknown>>;
+  const normal = typeDetails[0];
+  assert.equal(PokemonRecordSchema.safeParse({ ...first, typeDetails: [{ ...normal, pastDamageRelations: [{ generation: { name: 'generation-i', url: 'https://pokeapi.co/api/v2/generation/1/' }, damageRelations: normal?.damageRelations }] }, ...typeDetails.slice(1)] }).success, true);
+  assert.equal(PokemonRecordSchema.safeParse({ ...first, typeDetails: [{ ...normal, damageRelations: { noDamageTo: [] } }, ...typeDetails.slice(1)] }).success, false);
+  assert.equal(PokemonRecordSchema.safeParse({ ...first, typeDetails: [] }).success, false);
+});
+
 test('requires vector rows to contain finite vectors of exactly 4096 dimensions', async () => {
-  const dataset: unknown = JSON.parse(await readFile(datasetPath, 'utf8'));
+  const dataset: unknown = addEmptyTypeRelations(JSON.parse(await readFile(datasetPath, 'utf8')));
   assert.ok(Array.isArray(dataset));
   const first = dataset[0] as Record<string, unknown>;
   const stats = first.stats as Record<string, number>;
   const valid = {
     ...first,
+    typeDetails: JSON.stringify(first.typeDetails),
     ...stats,
     text: 'Bulbasaur vector text',
     vector: Array.from({ length: 4096 }, () => 0.25),

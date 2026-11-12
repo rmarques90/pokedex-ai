@@ -19,8 +19,9 @@ const licenseUrl = 'https://bulbapedia.bulbagarden.net/wiki/Bulbapedia:Copyright
 
 function record(id: number): PokemonRecord {
   const stats = { hp: 1, attack: 2, defense: 3, specialAttack: 4, specialDefense: 5, speed: 6 };
+  const emptyRelations = { noDamageTo: [], halfDamageTo: [], doubleDamageTo: [], noDamageFrom: [], halfDamageFrom: [], doubleDamageFrom: [] };
   return {
-    id, name: `pokemon-${id}`, types: ['normal'], stats, total: 21,
+    id, name: `pokemon-${id}`, types: ['normal'], typeDetails: [{ name: 'normal', url: 'https://pokeapi.co/api/v2/type/1/', damageRelations: emptyRelations, pastDamageRelations: [] }], stats, total: 21,
     description: `Biology description for Pokemon ${id}.`,
     pokemonUrl: `https://pokeapi.co/api/v2/pokemon/${id}/`,
     speciesUrl: `https://pokeapi.co/api/v2/pokemon-species/${id}/`,
@@ -34,12 +35,30 @@ function record(id: number): PokemonRecord {
 function apiPokemon(id: number) {
   return {
     id, name: `pokemon-${id}`, is_default: true,
-    types: [{ slot: 1, type: { name: 'normal' } }],
+    types: [{ slot: 1, type: { name: 'normal', url: 'https://pokeapi.co/api/v2/type/1/' } }],
     stats: [
       ['hp', 1], ['attack', 2], ['defense', 3], ['special-attack', 4], ['special-defense', 5], ['speed', 6],
     ].map(([name, value]) => ({ stat: { name }, base_stat: value })),
     sprites: { front_default: `https://example.test/${id}-sprite.png`, other: { 'official-artwork': { front_default: `https://example.test/${id}.png` } } },
     species: { url: `https://pokeapi.co/api/v2/pokemon-species/${id}/` },
+  };
+}
+
+function apiType() {
+  const reference = { name: 'ghost', url: 'https://pokeapi.co/api/v2/type/8/' };
+  return {
+    name: 'normal',
+    damage_relations: {
+      no_damage_to: [reference], half_damage_to: [], double_damage_to: [],
+      no_damage_from: [], half_damage_from: [], double_damage_from: [],
+    },
+    past_damage_relations: [{
+      generation: { name: 'generation-i', url: 'https://pokeapi.co/api/v2/generation/1/' },
+      damage_relations: {
+        no_damage_to: [], half_damage_to: [], double_damage_to: [],
+        no_damage_from: [], half_damage_from: [], double_damage_from: [reference],
+      },
+    }],
   };
 }
 
@@ -83,9 +102,11 @@ test('collects all 151 linked default Pokemon and uses their source URLs', async
     count: number;
     results: Array<{ name: string; url: string }>;
   };
+  let typeRequestCount = 0;
   const fetcher: typeof fetch = async (input) => {
     const url = String(input);
     if (url.includes('/pokemon?')) return response(JSON.stringify(fixture));
+    if (url.includes('/type/')) { typeRequestCount += 1; return response(JSON.stringify(apiType())); }
     const id = Number(url.match(/pokemon\/(\d+)\/$/)?.[1]);
     if (Number.isInteger(id)) return response(JSON.stringify(apiPokemon(id)));
     if (url.includes('bulbapedia')) return response('<h2><span id="Biology">Biology</span></h2><p>Only the Biology text.</p><h2>Other</h2>');
@@ -99,8 +120,24 @@ test('collects all 151 linked default Pokemon and uses their source URLs', async
   assert.equal(collected[0]?.record.total, 21);
   assert.equal(collected[0]?.record.description, 'Only the Biology text.');
   assert.equal(collected[0]?.record.descriptionAttribution, 'Bulbapedia');
+  assert.equal(collected[0]?.record.typeDetails[0]?.damageRelations.noDamageTo[0]?.name, 'ghost');
+  assert.equal(collected[0]?.record.typeDetails[0]?.pastDamageRelations[0]?.generation.name, 'generation-i');
+  assert.equal(typeRequestCount, 1, 'shared type resource should be fetched once per collection');
   assert.equal(collected[150]?.record.pokemonUrl, 'https://pokeapi.co/api/v2/pokemon/151/');
   assert.equal(collected[0]?.record.imageSourceUrl, 'https://example.test/1.png');
+});
+
+test('fails collection when a PokéAPI type resource is invalid', async () => {
+  const list = JSON.stringify({ count: 1, results: [{ name: 'pokemon-1', url: 'https://pokeapi.co/api/v2/pokemon/1/' }] });
+  const fetcher: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes('/pokemon?')) return response(list);
+    if (url.includes('/pokemon/1/')) return response(JSON.stringify(apiPokemon(1)));
+    if (url.includes('/type/')) return response(JSON.stringify({ name: 'normal', damage_relations: {} }));
+    if (url.includes('bulbapedia')) return response('<h2><span id="Biology">Biology</span></h2><p>Biology.</p><h2>Other</h2>');
+    return response(new Uint8Array([1]), 'image/png');
+  };
+  await assert.rejects(collectPokemonSample(fetcher));
 });
 
 test('rejects an incomplete PokéAPI list and non-default sample records', async () => {
@@ -122,6 +159,7 @@ test('reports Pokemon context when its Bulbapedia page or image cannot be fetche
     const url = String(input);
     if (url.includes('/pokemon?')) return response(list);
     if (url.includes('/pokemon/1/')) return response(detail);
+    if (url.includes('/type/')) return response(JSON.stringify(apiType()));
     return new Response(null, { status: url.includes('bulbapedia') ? 503 : 404 });
   };
   await assert.rejects(collectPokemonSample(failBulbapedia), /Bulbapedia request failed \(503\) for pokemon-1/);
@@ -130,6 +168,7 @@ test('reports Pokemon context when its Bulbapedia page or image cannot be fetche
     const url = String(input);
     if (url.includes('/pokemon?')) return response(list);
     if (url.includes('/pokemon/1/')) return response(detail);
+    if (url.includes('/type/')) return response(JSON.stringify(apiType()));
     if (url.includes('bulbapedia')) return response('<h2><span id="Biology">Biology</span></h2><p>Biology.</p><h2>Other</h2>');
     return new Response(null, { status: 503 });
   };
@@ -168,6 +207,7 @@ test('npm collection command is configured and supports an isolated sample run',
     const url = String(input);
     if (url.includes('/pokemon?')) return response(list);
     if (url.includes('/pokemon/1/')) return response(JSON.stringify(apiPokemon(1)));
+    if (url.includes('/type/')) return response(JSON.stringify(apiType()));
     if (url.includes('bulbapedia')) return response('<h2><span id="Biology">Biology</span></h2><p>Biology.</p><h2>Other</h2>');
     return response(new Uint8Array([7, 8, 9]), 'image/png');
   };

@@ -5,6 +5,7 @@ import { runPopulateCommand } from './populate-vector-database.js';
 import type { PokemonVectorStore } from '../store/lance-db-store.js';
 import type { EmbeddingClient } from '../service/openrouter-embeddings.js';
 import { EMBEDDING_DIMENSIONS } from '../constants.js';
+import { addEmptyTypeRelations } from '../test-helpers/pokemon-dataset.js';
 
 const datasetUrl = new URL('../../store/data/pokemon.json', import.meta.url);
 
@@ -20,7 +21,7 @@ function dependencies(overrides: Partial<Parameters<typeof runPopulateCommand>[0
   const embeddings: EmbeddingClient = { async embedDocuments(texts) { return texts.map(() => Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0.1)); } };
   const base = {
     environment: { LANCEDB_COLLECTION_NAME: 'pokedex_vectors', OPENROUTER_API_KEY: 'test-secret' },
-    readDataset: () => readFile(datasetUrl, 'utf8'),
+    async readDataset() { return JSON.stringify(addEmptyTypeRelations(JSON.parse(await readFile(datasetUrl, 'utf8')))); },
     createEmbeddings: () => embeddings,
     connectStore: async () => { connectionCount += 1; return { store, databaseExisted: true }; },
     writeLine: (line: string) => lines.push(line),

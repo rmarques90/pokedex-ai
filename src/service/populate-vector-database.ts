@@ -36,12 +36,38 @@ export interface PopulationResult {
 }
 
 export function toEmbeddingDocument(pokemon: PokemonRecord): PokemonEmbeddingDocument {
+  const typeFacts = pokemon.typeDetails.flatMap((type) => {
+    const current: Array<[string, typeof type.damageRelations.doubleDamageTo]> = [
+      ['strong against', type.damageRelations.doubleDamageTo],
+      ['resisted by', type.damageRelations.halfDamageTo],
+      ['no effect against', type.damageRelations.noDamageTo],
+      ['weak to', type.damageRelations.doubleDamageFrom],
+      ['resistant to', type.damageRelations.halfDamageFrom],
+      ['immune to', type.damageRelations.noDamageFrom],
+    ] as const;
+    const lines = current.filter(([, targets]) => targets.length > 0)
+      .map(([meaning, targets]) => `Type ${type.name} is ${meaning}: ${targets.map(({ name }) => name).join(', ')}.`);
+    const historical = type.pastDamageRelations.flatMap(({ generation, damageRelations }) => {
+      const relations: Array<[string, typeof damageRelations.doubleDamageTo]> = [
+      ['strong against', damageRelations.doubleDamageTo],
+      ['resisted by', damageRelations.halfDamageTo],
+      ['no effect against', damageRelations.noDamageTo],
+      ['weak to', damageRelations.doubleDamageFrom],
+      ['resistant to', damageRelations.halfDamageFrom],
+      ['immune to', damageRelations.noDamageFrom],
+      ];
+      return relations.filter(([, targets]) => targets.length > 0).map(([meaning, targets]) =>
+        `In ${generation.name}, type ${type.name} was ${meaning}: ${targets.map(({ name }) => name).join(', ')}.`);
+    });
+    return [...lines, ...historical];
+  });
   const text = [
     `Name: ${pokemon.name}`,
     `Types: ${pokemon.types.join(', ')}`,
     `Base stats: HP ${pokemon.stats.hp}, Attack ${pokemon.stats.attack}, Defense ${pokemon.stats.defense}, Special Attack ${pokemon.stats.specialAttack}, Special Defense ${pokemon.stats.specialDefense}, Speed ${pokemon.stats.speed}`,
     `Total base stats: ${pokemon.total}`,
     `Biology: ${pokemon.description}`,
+    ...typeFacts,
   ].join('\n');
 
   return PokemonEmbeddingDocumentSchema.parse({
@@ -82,6 +108,7 @@ export async function populateVectorDatabase(
       vector,
       name: pokemon.name,
       types: pokemon.types,
+      typeDetails: JSON.stringify(pokemon.typeDetails),
       ...pokemon.stats,
       total: pokemon.total,
       description: pokemon.description,

@@ -6,11 +6,12 @@ import { InvalidPokemonDatasetError, populateVectorDatabase, PopulationConfigura
 import type { PokemonVectorRow } from '../domain/pokemon-vector-document.js';
 import type { CollectionState, PokemonVectorStore } from '../store/lance-db-store.js';
 import type { EmbeddingClient } from './openrouter-embeddings.js';
+import { addEmptyTypeRelations } from '../test-helpers/pokemon-dataset.js';
 
 const datasetPath = new URL('../../store/data/pokemon.json', import.meta.url);
 
 async function readDataset(): Promise<unknown> {
-  return JSON.parse(await readFile(datasetPath, 'utf8')) as unknown;
+  return addEmptyTypeRelations(JSON.parse(await readFile(datasetPath, 'utf8')));
 }
 
 function fakeStore() {
@@ -46,6 +47,27 @@ test('includes all retrieval facts in the embedding text and keeps source data a
   assert.match(document.id, /^001$/);
 });
 
+test('adds current and generation-labeled historical type relations to searchable text', async () => {
+  const dataset = await readDataset();
+  assert.ok(Array.isArray(dataset));
+  const pokemon = dataset[0] as Parameters<typeof toEmbeddingDocument>[0];
+  const emptyRelations = { noDamageTo: [], halfDamageTo: [], doubleDamageTo: [], noDamageFrom: [], halfDamageFrom: [], doubleDamageFrom: [] };
+  const document = toEmbeddingDocument({
+    ...pokemon,
+    typeDetails: [{
+      name: 'grass', url: 'https://pokeapi.co/api/v2/type/12/',
+      damageRelations: { ...emptyRelations, doubleDamageTo: [{ name: 'water', url: 'https://pokeapi.co/api/v2/type/11/' }] },
+      pastDamageRelations: [{
+        generation: { name: 'generation-i', url: 'https://pokeapi.co/api/v2/generation/1/' },
+        damageRelations: { ...emptyRelations, halfDamageFrom: [{ name: 'fire', url: 'https://pokeapi.co/api/v2/type/10/' }] },
+      }],
+    }, ...pokemon.typeDetails.slice(1)],
+  });
+  assert.match(document.text, /Type grass is strong against: water/);
+  assert.match(document.text, /In generation-i, type grass was resistant to: fire/);
+  assert.equal(document.metadata.typeDetails[0]?.url, 'https://pokeapi.co/api/v2/type/12/');
+});
+
 test('embeds and replaces exactly the complete validated 151-record dataset', async () => {
   const { calls, store } = fakeStore();
   const result = await populateVectorDatabase(await readDataset(), {
@@ -57,6 +79,7 @@ test('embeds and replaces exactly the complete validated 151-record dataset', as
   assert.equal(calls[0]?.rows[150]?.id, 151);
   assert.equal(calls[0]?.rows[0]?.vector.length, EMBEDDING_DIMENSIONS);
   assert.equal(calls[0]?.rows[0]?.descriptionAttribution, 'Bulbapedia');
+  assert.equal(JSON.parse(calls[0]?.rows[0]?.typeDetails ?? '[]')[0]?.name, 'grass');
 });
 
 test('invalid data, protected names, and embedding failures never call the store', async () => {

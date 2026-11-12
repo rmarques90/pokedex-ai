@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { PokemonDatasetSchema, PokemonRecordSchema, type PokemonRecord } from '../domain/pokemon-vector-document.js';
+import { PokemonDatasetSchema, PokemonRecordSchema, type PokemonRecord, type PokemonTypeDetails } from '../domain/pokemon-vector-document.js';
 
 export { PokemonDatasetSchema, PokemonRecordSchema };
 export type { PokemonRecord };
@@ -24,13 +24,28 @@ const PokemonApiSchema = z.object({
   id: z.number().int().min(1).max(151),
   name: z.string().min(1),
   is_default: z.boolean(),
-  types: z.array(z.object({ slot: z.number().int().positive(), type: z.object({ name: z.string().min(1) }) })).min(1).max(2),
+  types: z.array(z.object({ slot: z.number().int().positive(), type: z.object({ name: z.string().min(1), url: z.string().url() }) })).min(1).max(2),
   stats: z.array(z.object({ base_stat: z.number().int().nonnegative(), stat: z.object({ name: z.string().min(1) }) })).length(6),
   sprites: z.object({
     front_default: z.string().url().nullable(),
     other: z.object({ 'official-artwork': z.object({ front_default: z.string().url().nullable() }).optional() }).optional(),
   }),
   species: z.object({ url: z.string().url() }),
+});
+
+const ApiTypeReferenceSchema = z.object({ name: z.string().min(1), url: z.string().url() });
+const ApiDamageRelationsSchema = z.object({
+  no_damage_to: z.array(ApiTypeReferenceSchema),
+  half_damage_to: z.array(ApiTypeReferenceSchema),
+  double_damage_to: z.array(ApiTypeReferenceSchema),
+  no_damage_from: z.array(ApiTypeReferenceSchema),
+  half_damage_from: z.array(ApiTypeReferenceSchema),
+  double_damage_from: z.array(ApiTypeReferenceSchema),
+});
+const ApiTypeSchema = z.object({
+  name: z.string().min(1),
+  damage_relations: ApiDamageRelationsSchema,
+  past_damage_relations: z.array(z.object({ generation: ApiTypeReferenceSchema, damage_relations: ApiDamageRelationsSchema })),
 });
 
 type Fetcher = typeof fetch;
@@ -93,11 +108,45 @@ function getRequiredStat(stats: Record<string, number>, name: string): number {
   return value;
 }
 
-async function collectOne(fetcher: Fetcher, entry: PokemonListEntry): Promise<CollectedPokemon> {
+function normalizeRelations(relations: z.infer<typeof ApiDamageRelationsSchema>) {
+  return {
+    noDamageTo: relations.no_damage_to,
+    halfDamageTo: relations.half_damage_to,
+    doubleDamageTo: relations.double_damage_to,
+    noDamageFrom: relations.no_damage_from,
+    halfDamageFrom: relations.half_damage_from,
+    doubleDamageFrom: relations.double_damage_from,
+  };
+}
+
+async function getTypeDetails(fetcher: Fetcher, type: { name: string; url: string }, cache: Map<string, Promise<PokemonTypeDetails>>): Promise<PokemonTypeDetails> {
+  let pending = cache.get(type.url);
+  if (!pending) {
+    pending = fetchJson(fetcher, type.url, ApiTypeSchema).then((apiType) => {
+      if (apiType.name !== type.name) throw new Error(`PokéAPI returned unexpected type for ${type.name}`);
+      return {
+        name: apiType.name,
+        url: type.url,
+        damageRelations: normalizeRelations(apiType.damage_relations),
+        pastDamageRelations: apiType.past_damage_relations.map(({ generation, damage_relations }) => ({
+          generation,
+          damageRelations: normalizeRelations(damage_relations),
+        })),
+      };
+    });
+    cache.set(type.url, pending);
+  }
+  return pending;
+}
+
+async function collectOne(fetcher: Fetcher, entry: PokemonListEntry, typeCache: Map<string, Promise<PokemonTypeDetails>>): Promise<CollectedPokemon> {
   const pokemon = await fetchJson(fetcher, entry.url, PokemonApiSchema);
   if (pokemon.name !== entry.name || !pokemon.is_default || pokemon.id > 151) {
     throw new Error(`Unexpected Pokemon list entry for ${entry.name}`);
   }
+
+  const orderedTypes = [...pokemon.types].sort((a, b) => a.slot - b.slot);
+  const typeDetails = await Promise.all(orderedTypes.map(({ type }) => getTypeDetails(fetcher, type, typeCache)));
 
   const descriptionSourceUrl = bulbapediaUrl(pokemon.name);
   const page = await fetcher(descriptionSourceUrl, { headers: { 'user-agent': 'pokedex-ai personal RAG data collector' } });
@@ -122,7 +171,7 @@ async function collectOne(fetcher: Fetcher, entry: PokemonListEntry): Promise<Co
   const imagePath = `images/${String(pokemon.id).padStart(3, '0')}-${pokemon.name}.${extension}`;
   const record = PokemonRecordSchema.parse({
     id: pokemon.id, name: pokemon.name,
-    types: pokemon.types.sort((a, b) => a.slot - b.slot).map(({ type }) => type.name),
+    types: orderedTypes.map(({ type }) => type.name), typeDetails,
     stats: normalizedStats, total, description,
     pokemonUrl: entry.url, speciesUrl: pokemon.species.url, descriptionSourceUrl,
     descriptionAttribution: 'Bulbapedia', descriptionLicense: BULBAPEDIA_LICENSE,
@@ -138,7 +187,8 @@ export async function collectPokemon(fetcher: Fetcher = fetch): Promise<Collecte
   if (urls.size !== 151) throw new Error('PokéAPI returned duplicate Pokemon resource URLs');
 
   const collected: CollectedPokemon[] = [];
-  for (const entry of list.results) collected.push(await collectOne(fetcher, entry));
+  const typeCache = new Map<string, Promise<PokemonTypeDetails>>();
+  for (const entry of list.results) collected.push(await collectOne(fetcher, entry, typeCache));
   const dataset = PokemonDatasetSchema.parse(collected.map(({ record }) => record));
   if (dataset.some((record, index) => record.id !== index + 1)) {
     throw new Error('PokéAPI results do not cover National Pokedex numbers 001 through 151 in order');
@@ -150,7 +200,7 @@ export async function collectPokemonSample(fetcher: Fetcher = fetch): Promise<Co
   const list = await fetchJson(fetcher, POKEAPI_SAMPLE_LIST_URL, PokemonListSchema);
   const first = list.results[0];
   if (!first) throw new Error('PokéAPI returned no Pokemon');
-  return [await collectOne(fetcher, first)];
+  return [await collectOne(fetcher, first, new Map())];
 }
 
 export async function writeDataset(outputDirectory: string, collected: CollectedPokemon[]): Promise<string> {

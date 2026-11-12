@@ -9,12 +9,13 @@ import { LanceDbVectorStore } from './lance-db-store.js';
 import { PokemonDatasetSchema, PokemonVectorRowSchema, type PokemonVectorRow } from '../domain/pokemon-vector-document.js';
 import { EMBEDDING_DIMENSIONS } from '../constants.js';
 import { RetrievalError, VectorCollectionUnavailableError } from '../domain/ask.js';
+import { addEmptyTypeRelations } from '../test-helpers/pokemon-dataset.js';
 
 const sourcePath = new URL('../../store/data/pokemon.json', import.meta.url);
 
 async function rows(textPrefix: string): Promise<PokemonVectorRow[]> {
   const { readFile } = await import('node:fs/promises');
-  const source: unknown = JSON.parse(await readFile(sourcePath, 'utf8'));
+  const source: unknown = addEmptyTypeRelations(JSON.parse(await readFile(sourcePath, 'utf8')));
   const dataset = PokemonDatasetSchema.parse(source);
   return dataset.map((pokemon) => PokemonVectorRowSchema.parse({
     id: pokemon.id,
@@ -22,6 +23,13 @@ async function rows(textPrefix: string): Promise<PokemonVectorRow[]> {
     vector: Array.from({ length: EMBEDDING_DIMENSIONS }, () => pokemon.id / 151),
     name: pokemon.name,
     types: pokemon.types,
+    typeDetails: JSON.stringify(pokemon.typeDetails.map((type, index) => pokemon.id === 1 && index === 0 ? {
+      ...type,
+      damageRelations: {
+        ...type.damageRelations,
+        noDamageTo: [{ name: 'ghost', url: 'https://pokeapi.co/api/v2/type/ghost/' }],
+      },
+    } : type)),
     ...pokemon.stats,
     total: pokemon.total,
     description: pokemon.description,
@@ -116,6 +124,10 @@ test('searches only the requested collection, honors topK, and returns validated
   assert.equal(found[0]?.id, 1);
   assert.equal(found[0]?.pokemonName, 'bulbasaur');
   assert.equal(found[0]?.sources.some(({ url }) => url.includes('bulbapedia')), true);
+  assert.equal(found[0]?.sources.some(({ url }) => url === 'https://pokeapi.co/api/v2/type/grass/'), true);
+  const storedBulbasaur = await (await connection.openTable('pokedex_vectors')).query().where('id = 1').toArray();
+  const storedTypes = JSON.parse(String(storedBulbasaur[0]?.typeDetails)) as Array<{ damageRelations: { noDamageTo: Array<{ name: string }> } }>;
+  assert.equal(storedTypes[0]?.damageRelations.noDamageTo[0]?.name, 'ghost');
   assert.equal(found.every(({ sources }) => sources.length > 0), true);
   await assert.rejects(
     store.searchByVector('another_collection', Array.from({ length: EMBEDDING_DIMENSIONS }, () => 1 / 151), 5),
