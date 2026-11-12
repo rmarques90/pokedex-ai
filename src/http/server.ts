@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AskRequestSchema, ModelGenerationError, PromptGuardrailError, RetrievalError, type AskResult } from '../domain/ask.js';
 import { AskStreamEventSchema, type AskStreamUpdate } from '../domain/ask-stream.js';
+import { isRetryableOpenRouterFailure } from '../service/openrouter-diagnostics.js';
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
@@ -140,7 +141,7 @@ async function handleStreamRequest(
     if (!response.destroyed) response.end();
   } catch (error) {
     if (controller.signal.aborted || response.destroyed) return;
-    const retryable = !(error instanceof PromptGuardrailError);
+    const retryable = isRetryableOpenRouterFailure(error);
     const safeMessage = error instanceof PromptGuardrailError
       ? error.message
       : error instanceof ModelGenerationError || error instanceof RetrievalError

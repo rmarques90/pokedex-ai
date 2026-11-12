@@ -15,6 +15,7 @@ import {
 } from '../service/openrouter-embeddings.js';
 import { createPromptInjectionGuardrail, type PromptInjectionGuardrail } from '../service/prompt-injection-guardrail.js';
 import { connectLocalVectorStore, type LocalVectorStoreHandle } from '../store/local-lancedb.js';
+import { logOpenRouterFailure, type OpenRouterDiagnosticLogger } from '../service/openrouter-diagnostics.js';
 
 export interface AskServiceRuntimeOptions {
   environment: NodeJS.ProcessEnv;
@@ -23,6 +24,7 @@ export interface AskServiceRuntimeOptions {
   createGenerator?: (apiKey: string) => PokemonAnswerGenerator;
   createGuardrail?: (apiKey: string) => PromptInjectionGuardrail;
   createPromptSafetyClassifier?: (apiKey: string) => PromptSafetyClassifier;
+  diagnosticLogger?: OpenRouterDiagnosticLogger;
 }
 
 export interface AskService {
@@ -53,6 +55,7 @@ export async function createAskService(options: AskServiceRuntimeOptions): Promi
     embeddings,
     generator,
     guardrail,
+    diagnosticLogger: options.diagnosticLogger ?? logOpenRouterFailure,
   };
   return {
     ask: (question) => answerQuestion(question, dependencies),

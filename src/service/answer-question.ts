@@ -10,10 +10,12 @@ import {
   type RetrievedEvidence,
 } from '../domain/ask.js';
 import type { PokemonVectorStore } from '../store/lance-db-store.js';
-import { embedQuery, type QueryEmbeddingClient } from './openrouter-embeddings.js';
+import { embedQuery, EmbeddingGenerationError, type QueryEmbeddingClient } from './openrouter-embeddings.js';
 import type { PokemonAnswerGenerator, PokemonAnswerMode } from './openrouter-chat-model.js';
 import type { PromptInjectionGuardrail } from './prompt-injection-guardrail.js';
 import type { AskStreamUpdate } from '../domain/ask-stream.js';
+import { CHAT_MODEL, EMBEDDING_MODEL, PROMPT_SAFETY_MODEL } from '../constants.js';
+import { withOpenRouterDiagnostics, type OpenRouterDiagnosticLogger } from './openrouter-diagnostics.js';
 
 export const INITIAL_RETRIEVAL_TOP_K = 5;
 
@@ -23,6 +25,7 @@ export interface AnswerQuestionDependencies {
   embeddings: QueryEmbeddingClient;
   generator: PokemonAnswerGenerator;
   guardrail: PromptInjectionGuardrail;
+  diagnosticLogger?: OpenRouterDiagnosticLogger;
 }
 
 export interface GeneratedAnswerResult {
@@ -33,7 +36,10 @@ export interface GeneratedAnswerResult {
 
 export async function answerQuestion(questionInput: unknown, dependencies: AnswerQuestionDependencies): Promise<AskResult> {
   const question = AskQuestionSchema.parse(questionInput);
-  const guardedQuestion = await dependencies.guardrail.checkQuestion(question);
+  const guardedQuestion = await withOpenRouterDiagnostics({
+    stage: 'prompt_safety', model: PROMPT_SAFETY_MODEL, logger: dependencies.diagnosticLogger,
+    operation: () => dependencies.guardrail.checkQuestion(question),
+  });
 
   let retrieved: RetrievedEvidence[];
   const intent = classifyQuestion(question);
@@ -46,7 +52,10 @@ export async function answerQuestion(questionInput: unknown, dependencies: Answe
       throw new RetrievalError('Pokemon evidence retrieval failed.', { cause: error });
     }
   } else {
-    const vector = await embedQuery(dependencies.embeddings, question);
+    const vector = await withOpenRouterDiagnostics({
+      stage: 'query_embedding', model: EMBEDDING_MODEL, logger: dependencies.diagnosticLogger,
+      operation: () => embedQuery(dependencies.embeddings, question),
+    });
   try {
     retrieved = (await dependencies.store.searchByVector(dependencies.collectionName, vector, INITIAL_RETRIEVAL_TOP_K))
       .map((item) => RetrievedEvidenceSchema.parse(item));
@@ -60,7 +69,10 @@ export async function answerQuestion(questionInput: unknown, dependencies: Answe
   const generate = async (mode: PokemonAnswerMode, evidence: RetrievedEvidence[]): Promise<GeneratedAnswerResult> => {
     let result: GeneratedAnswerResult;
     try {
-      result = await dependencies.generator.generate({ question: guardedQuestion, evidence, mode });
+      result = await withOpenRouterDiagnostics({
+        stage: 'answer_generation', model: CHAT_MODEL, logger: dependencies.diagnosticLogger,
+        operation: () => dependencies.generator.generate({ question: guardedQuestion, evidence, mode }),
+      });
     } catch (error) {
       if (error instanceof ModelGenerationError) throw error;
       throw new ModelGenerationError('OpenRouter answer generation failed.', { cause: error });
@@ -110,7 +122,11 @@ export async function streamAnswerQuestion(
   emit: (update: AskStreamUpdate) => void,
 ): Promise<AskResult> {
   const question = AskQuestionSchema.parse(questionInput);
-  const guardedQuestion = await dependencies.guardrail.checkQuestion(question, signal);
+  const guardedQuestion = await withOpenRouterDiagnostics({
+    stage: 'prompt_safety', model: PROMPT_SAFETY_MODEL, logger: dependencies.diagnosticLogger,
+    isCancellation: () => signal.aborted,
+    operation: () => dependencies.guardrail.checkQuestion(question, signal),
+  });
   if (signal.aborted) throw signal.reason;
 
   const intent = classifyQuestion(question);
@@ -120,12 +136,16 @@ export async function streamAnswerQuestion(
       retrieved = (await dependencies.store.lookup(dependencies.collectionName, intent.lookup))
         .map((item) => RetrievedEvidenceSchema.parse(item));
     } else {
-      const vector = await embedQuery(dependencies.embeddings, question);
+      const vector = await withOpenRouterDiagnostics({
+        stage: 'query_embedding', model: EMBEDDING_MODEL, logger: dependencies.diagnosticLogger,
+        isCancellation: () => signal.aborted,
+        operation: () => embedQuery(dependencies.embeddings, question),
+      });
       retrieved = (await dependencies.store.searchByVector(dependencies.collectionName, vector, INITIAL_RETRIEVAL_TOP_K))
         .map((item) => RetrievedEvidenceSchema.parse(item));
     }
   } catch (error) {
-    if (error instanceof RetrievalError) throw error;
+    if (error instanceof RetrievalError || error instanceof EmbeddingGenerationError) throw error;
     throw new RetrievalError('Pokémon evidence retrieval failed.', { cause: error });
   }
   if (signal.aborted) throw signal.reason;
@@ -135,12 +155,19 @@ export async function streamAnswerQuestion(
     try {
       const input = { question: guardedQuestion, evidence, mode };
       const result = dependencies.generator.stream
-        ? await dependencies.generator.stream({ ...input, signal }, (update) => {
-            emit(update.type === 'replace'
-              ? { type: 'replace', reason: 'revision', text: update.text }
-              : update);
+        ? await withOpenRouterDiagnostics({
+            stage: 'answer_stream', model: CHAT_MODEL, logger: dependencies.diagnosticLogger,
+            isCancellation: () => signal.aborted,
+            operation: () => dependencies.generator.stream!({ ...input, signal }, (update) => {
+              emit(update.type === 'replace'
+                ? { type: 'replace', reason: 'revision', text: update.text }
+                : update);
+            }),
           })
-        : await dependencies.generator.generate(input);
+        : await withOpenRouterDiagnostics({
+            stage: 'answer_generation', model: CHAT_MODEL, logger: dependencies.diagnosticLogger,
+            operation: () => dependencies.generator.generate(input),
+          });
       if (!dependencies.generator.stream) emit({ type: 'delta', text: result.answer });
       if (mode === 'general' && result.usedPokemonIds.length > 0) {
         throw new ModelGenerationError('A general knowledge answer cannot cite indexed evidence.');
