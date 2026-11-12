@@ -22,9 +22,9 @@ export function App({ ask = askPokemon }: { ask?: AskAction }) {
     saveLanguagePreference(next);
   }
 
-  async function submit(event?: FormEvent) {
+  async function submit(event?: FormEvent, questionInput?: string) {
     event?.preventDefault();
-    const normalized = question.trim();
+    const normalized = (questionInput ?? question).trim();
     if (!normalized || loading) return;
     setQuestion(normalized);
     setSubmittedQuestion(normalized);
@@ -56,7 +56,7 @@ export function App({ ask = askPokemon }: { ask?: AskAction }) {
         <button className="nav-item active" onClick={reset}><span>✦</span>{copy.assistantName}</button>
         <div className="suggestion-title">{copy.suggestedQuestions}</div>
         <nav className="suggestions" aria-label={copy.suggestedQuestions}>
-          {suggestions.map((item) => <button key={item} onClick={() => setQuestion(item)}>{item}<span>↗</span></button>)}
+          {suggestions.map((item) => <button key={item} onClick={() => void submit(undefined, item)}>{item}<span>↗</span></button>)}
         </nav>
         <div className="trainer"><div className="trainer-avatar">✦</div><div><strong>{copy.trainer}</strong><small>Pokédex AI</small></div><span className="trainer-dot" /></div>
       </aside>
@@ -64,7 +64,7 @@ export function App({ ask = askPokemon }: { ask?: AskAction }) {
       <main className="main-panel" id="home">
         <header className="top-trim"><div className="trim-slot"/><div className="trim-slot"/><div className="trim-slot"/><div className="trim-light" aria-hidden="true"><span/></div><div className="trim-slot"/><div className="trim-slot"/><div className="trim-slot"/></header>
         <div className="content-wrap">
-          <div className="toolbar"><div className="breadcrumb"><span>⌂</span> / {copy.breadcrumb}</div><label className="language-label">◉ <span className="sr-only">Language</span><select aria-label="Language" value={language} onChange={(event) => changeLanguage(event.target.value as Language)}><option value="pt">🇧🇷 PT</option><option value="en">🇺🇸 EN</option></select><span>⌄</span></label></div>
+          <div className="toolbar"><div className="breadcrumb"><span>⌂</span> / {copy.breadcrumb}</div><div className="language-label" role="group" aria-label={copy.languageSelector}><button type="button" className="language-option" aria-pressed={language === 'pt'} onClick={() => changeLanguage('pt')}><LanguageFlag language="pt" /> <span>{'Portugu\u00eas'}</span></button><button type="button" className="language-option" aria-pressed={language === 'en'} onClick={() => changeLanguage('en')}><LanguageFlag language="en" /> <span>English</span></button></div></div>
           <section className="intro"><div><div className="eyebrow"><span/> {copy.assistantName}</div><h1>{copy.pageTitle}</h1><p>{copy.pageSubtitle}</p></div><div className="intro-mark" aria-hidden="true">✦</div></section>
           <section className="hero" aria-label={copy.heroTitle}>
             <div className="hero-copy"><span className="hero-kicker">POKÉDEX AI <i>✦</i></span><h2>{copy.heroTitle}</h2><p>{copy.heroSubtitle}</p><span className="pokemon-badge">{copy.pokemonBadge}</span></div>
@@ -74,14 +74,42 @@ export function App({ ask = askPokemon }: { ask?: AskAction }) {
           <form className="question-form" onSubmit={submit}>
             <label htmlFor="question-input">{copy.questionLabel}</label>
             <div className="input-row"><textarea id="question-input" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={copy.questionPlaceholder} rows={2} disabled={loading} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} /><button type="submit" disabled={loading || !question.trim()}>{loading ? <span className="spinner"/> : <span>✦</span>}{copy.ask}</button></div>
-            <div className="form-hint"><span>↵</span> {language === 'pt' ? 'Pressione Enter para perguntar' : 'Press Enter to ask'} <span className="hint-divider">·</span> {language === 'pt' ? 'Sua resposta vem dos dados da Pokédex' : 'Answers are grounded in Pokédex data'}</div>
+            <div className="form-hint"><span aria-hidden="true">{String.fromCodePoint(0x21b5)}</span> {copy.keyboardHint}</div>
           </form>
           {loading && <div className="state-card" role="status"><span className="spinner dark"/>{copy.loading}</div>}
           {error && <div className="state-card error-card" role="alert"><span>!</span><div><strong>{copy.requestError}</strong><button onClick={() => void submit()}>{copy.retry}</button></div></div>}
-          {result && <section className="answer-card" aria-live="polite"><div className="answer-top"><div className="answer-icon">✦</div><div><span className="answer-brand">{copy.answerLabel}</span><p className="asked-question">{submittedQuestion}</p></div><button className="reset-button" onClick={reset} aria-label={copy.newQuestion}>↻</button></div><div className="answer-body">{result.abstained && <div className="evidence-note">ⓘ {copy.insufficientEvidence}</div>}<p>{result.answer}</p></div>{result.sources.length > 0 && <div className="sources"><strong>{copy.sourcesLabel}</strong><ul>{result.sources.map((source) => <li key={`${source.pokemonId}-${source.url}`}><a href={source.url} target="_blank" rel="noreferrer"><span className="source-id">#{String(source.pokemonId).padStart(3, '0')}</span>{source.pokemonName}<span className="external-icon">↗</span></a></li>)}</ul></div>}<footer className="answer-footer">{copy.footerNote}<span>✦</span></footer></section>}
+          {result && <section className="answer-card" aria-live="polite"><div className="answer-top"><div className="answer-icon">✦</div><div><span className="answer-brand">{copy.answerLabel}</span><p className="asked-question">{submittedQuestion}</p></div><button className="reset-button" onClick={reset} aria-label={copy.newQuestion}>↻</button></div><div className="answer-body">{result.abstained && <div className="evidence-note">ⓘ {copy.insufficientEvidence}</div>}<p>{result.answer}</p></div>{result.sources.length > 0 && <div className="sources"><strong>{copy.sourcesLabel}</strong><ul>{result.sources.map((source) => <li key={`${source.pokemonId}-${source.url}`}><a href={source.url} target="_blank" rel="noreferrer"><span className="source-id">#{String(source.pokemonId).padStart(3, '0')}</span>{source.pokemonName}<span className="source-host">{getSourceIdentity(source.url)}</span><span className="external-icon">{String.fromCodePoint(0x2197)}</span></a></li>)}</ul></div>}<footer className="answer-footer">{copy.footerNote}<span>✦</span></footer></section>}
           <footer className="page-footer"><span>Pokédex AI <b>·</b> {language === 'pt' ? 'Feito para curiosos' : 'Made for curious trainers'}</span><span>✦</span></footer>
         </div>
       </main>
     </div>
+  );
+}
+
+function getSourceIdentity(sourceUrl: string): string {
+  try {
+    const source = new URL(sourceUrl);
+    return `${source.host}${source.pathname}${source.search}${source.hash}`;
+  } catch { return sourceUrl; }
+}
+
+function LanguageFlag({ language }: { language: Language }) {
+  if (language === 'pt') {
+    return (
+      <svg className="language-flag" viewBox="0 0 28 20" aria-hidden="true">
+        <rect width="28" height="20" rx="3" fill="#159447" />
+        <path d="M14 3 24 10 14 17 4 10Z" fill="#ffdf35" />
+        <circle cx="14" cy="10" r="4" fill="#2454a5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="language-flag" viewBox="0 0 28 20" aria-hidden="true">
+      <rect width="28" height="20" rx="3" fill="#fff" />
+      <path d="M0 1.5h28v2H0zm0 4h28v2H0zm0 4h28v2H0zm0 4h28v2H0zm0 4h28v1.5H0z" fill="#d92736" />
+      <path d="M0 0h13v11H0z" fill="#24447d" />
+      <path d="m2 2 1 .7L4 2l-.4 1.1.9.7H3.4L3 5l-.4-1.2H1.4l.9-.7L2 2zm5 0 1 .7L9 2l-.4 1.1.9.7H8.4L8 5l-.4-1.2H6.4l.9-.7L7 2zm5 0 1 .7 1-.7-.4 1.1.9.7h-1.1L13 5l-.4-1.2h-1.2l.9-.7L12 2zM4.5 6l1 .7 1-.7-.4 1.1.9.7H5.9l-.4 1.2-.4-1.2H4l.9-.7L4.5 6zm5 0 1 .7 1-.7-.4 1.1.9.7H10.9l-.4 1.2-.4-1.2H9l.9-.7L9.5 6z" fill="#fff" />
+    </svg>
   );
 }

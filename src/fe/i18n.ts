@@ -14,7 +14,7 @@ export interface UiCopy {
   heroTitle: string; heroSubtitle: string; pokemonBadge: string; questionLabel: string;
   questionPlaceholder: string; ask: string; emptyQuestion: string; loading: string;
   requestError: string; retry: string; answerLabel: string; insufficientEvidence: string;
-  sourcesLabel: string; footerNote: string;
+  sourcesLabel: string; footerNote: string; languageSelector: string; keyboardHint: string;
 }
 
 export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
@@ -29,7 +29,7 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     emptyQuestion: 'Digite uma pergunta para continuar.', loading: 'Consultando a Pokédex…',
     requestError: 'Não foi possível consultar a Pokédex. Tente novamente.', retry: 'Tentar novamente',
     answerLabel: 'Pokédex AI', insufficientEvidence: 'Os dados indexados não contêm informação suficiente para responder a esta pergunta.',
-    sourcesLabel: 'Referências', footerNote: 'Confira os detalhes nas fontes.',
+    sourcesLabel: 'Referências', footerNote: 'Confira os detalhes nas fontes.', languageSelector: '\u0049dioma da interface', keyboardHint: 'Enter para perguntar \u00b7 Shift+Enter para pular linha',
   },
   en: {
     brandTagline: 'Your intelligent Pokédex', newQuestion: 'New question', assistantName: 'Pokémon Assistant',
@@ -42,7 +42,7 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     emptyQuestion: 'Enter a question to continue.', loading: 'Checking the Pokédex…',
     requestError: 'The Pokédex could not be reached. Please try again.', retry: 'Try again',
     answerLabel: 'Pokédex AI', insufficientEvidence: 'The indexed data does not contain enough information to answer this question.',
-    sourcesLabel: 'References', footerNote: 'Check the sources for details.',
+    sourcesLabel: 'References', footerNote: 'Check the sources for details.', languageSelector: 'Interface language', keyboardHint: 'Enter to ask \u00b7 Shift+Enter for a new line',
   },
 };
 

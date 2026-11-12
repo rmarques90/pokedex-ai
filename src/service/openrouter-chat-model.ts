@@ -70,6 +70,7 @@ export const ANSWER_SYSTEM_PROMPT = [
   'Answer only with facts supported by the supplied retrieved Pokémon records.',
   'Do not use outside knowledge, tools, or invented facts.',
   'Answer in the same language as the user question.',
+  'Write the entire answer in the language of the user question, including Pok\u00e9mon type names and other domain terminology; translate terms from the evidence instead of leaving them in its source language. For example, use pedra in a Portuguese answer for the Rock type, and rock in an English answer.',
   'Start with the concise direct answer in the first sentence, then give the key supporting facts.',
   'Address every distinct request in the user question. When the question asks for Pokémon stats, include the individual base stats available in the supplied records, not only their total.',
   'For a best-Pokémon question, state the measurable criterion and whether the answer compares all indexed matches or only the retrieved records; never imply a global ranking from partial evidence.',
