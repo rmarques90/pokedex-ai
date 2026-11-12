@@ -28,6 +28,8 @@ test('renders the Portuguese page and accessible question controls by default', 
   assert.ok(screen.getByRole('group', { name: 'Idioma da interface' }));
   assert.ok(screen.getByRole('button', { name: 'Portugu\u00eas' }));
   assert.ok(screen.getByRole('button', { name: 'English' }));
+  assert.ok(screen.getByRole('link', { name: 'Pokédex AI home' }));
+  assert.equal(screen.getAllByRole('button', { name: /Quais tipos são fortes contra fogo/ }).length, 2);
   assert.equal(document.querySelectorAll('.language-flag').length, 2);
   assert.ok(screen.getByRole('button', { name: /Perguntar/ }));
 });
@@ -114,6 +116,7 @@ test('renders streamed text immediately and cancels the active request', async (
   assert.equal(receivedSignal?.aborted, true);
   assert.equal(screen.queryByText(/Bulbasaur is/), null);
   assert.equal(screen.queryByRole('alert'), null);
+  assert.equal(document.querySelector('.history-entry'), null);
   finish(answer);
 });
 
@@ -123,6 +126,7 @@ test('shows an error and allows retry after request failure', async () => {
   fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Question' } });
   fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
   await screen.findByRole('alert');
+  assert.equal(document.querySelector('.history-entry'), null);
   fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
   await screen.findByText(answer.answer);
   assert.equal(calls, 2);
@@ -157,7 +161,7 @@ test('labels an abstained response as insufficient evidence', async () => {
   assert.ok(screen.getByText(/Os dados indexados não contêm informação suficiente/));
 });
 
-test('reload starts without prior query/result but keeps language preference', async () => {
+test('reload restores the local conversation transcript and language preference', async () => {
   const view = render(<App ask={async () => answer} />);
   fireEvent.click(screen.getByRole('button', { name: 'English' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Your question' }), { target: { value: 'Question' } });
@@ -166,6 +170,70 @@ test('reload starts without prior query/result but keeps language preference', a
   view.unmount();
   render(<App ask={async () => answer} />);
   assert.equal((screen.getByRole('textbox', { name: 'Your question' }) as HTMLTextAreaElement).value, '');
-  assert.equal(screen.queryByText(answer.answer), null);
+  assert.ok(screen.getByText(answer.answer));
+  assert.ok(document.querySelector('.history-entry'));
   assert.equal(screen.getByRole('button', { name: 'English' }).getAttribute('aria-pressed'), 'true');
+});
+
+test('saved history opens a result modal without changing the active transcript', async () => {
+  render(<App ask={async () => answer} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'What is Charmander?' } });
+  fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
+  await screen.findByText(answer.answer);
+  const historyButton = document.querySelector('.history-entry') as HTMLButtonElement;
+  fireEvent.click(historyButton);
+  const dialog = screen.getByRole('dialog', { name: 'Resposta salva' });
+  assert.ok(dialog);
+  assert.equal(document.activeElement, dialog);
+  assert.equal(screen.getAllByText(answer.answer).length, 2);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
+  assert.equal(document.activeElement, historyButton);
+  assert.equal(screen.getAllByText(answer.answer).length, 1);
+});
+
+test('deleting a confirmed conversation removes its history and clears the active transcript', async () => {
+  render(<App ask={async () => answer} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Delete this conversation' } });
+  fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
+  await screen.findByText(answer.answer);
+  fireEvent.click(screen.getByRole('button', { name: /Excluir conversa: Delete this conversation/ }));
+  assert.ok(screen.getByRole('alertdialog'));
+  fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
+  await waitFor(() => assert.equal(screen.queryByText(answer.answer), null));
+  assert.equal(screen.queryByRole('button', { name: /Delete this conversation/ }), null);
+});
+
+test('canceling conversation deletion preserves the saved conversation', async () => {
+  render(<App ask={async () => answer} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Keep this conversation' } });
+  fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
+  await screen.findByText(answer.answer);
+  fireEvent.click(screen.getByRole('button', { name: /Excluir conversa: Keep this conversation/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Manter' }));
+  assert.ok(document.querySelector('.history-entry'));
+  assert.ok(screen.getByText(answer.answer));
+});
+
+test('starting a new conversation clears the transcript while keeping prior questions accessible', async () => {
+  render(<App ask={async () => answer} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Previous conversation' } });
+  fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
+  await screen.findByText(answer.answer);
+  fireEvent.click(screen.getByRole('button', { name: /Nova pergunta/ }));
+  assert.equal(screen.queryByText(answer.answer), null);
+  assert.ok(document.querySelector('.history-entry'));
+  assert.equal((screen.getByRole('textbox', { name: 'Sua pergunta' }) as HTMLTextAreaElement).value, '');
+});
+
+test('clear history requires confirmation and removes saved conversations', async () => {
+  render(<App ask={async () => answer} />);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Clear this history' } });
+  fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
+  await screen.findByText(answer.answer);
+  fireEvent.click(screen.getByRole('button', { name: 'Limpar histórico' }));
+  assert.ok(screen.getByRole('alertdialog'));
+  fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
+  await waitFor(() => assert.equal(screen.queryByText(answer.answer), null));
+  assert.equal(document.querySelector('.history-entry'), null);
 });

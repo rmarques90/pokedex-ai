@@ -16,11 +16,19 @@ export interface UiCopy {
   requestError: string; retry: string; answerLabel: string; insufficientEvidence: string; generalKnowledge: string;
   sourcesLabel: string; footerNote: string; languageSelector: string; keyboardHint: string;
   cancel: string; retrying: string;
+  history: string; historyEmpty: string; clearHistory: string; deleteConversation: string;
+  confirmDeleteTitle: string; confirmDeleteMessage: string; confirmClearTitle: string; confirmClearMessage: string;
+  confirm: string; dismiss: string; savedAnswer: string; storageWarning: string; close: string;
 }
 
 export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
   pt: {
     cancel: 'Cancelar', retrying: 'Tentativa {attempt} de 3; tentando novamente...',
+    history: 'Conversas anteriores', historyEmpty: 'Suas perguntas concluídas aparecerão aqui.',
+    clearHistory: 'Limpar histórico', deleteConversation: 'Excluir conversa',
+    confirmDeleteTitle: 'Excluir esta conversa?', confirmDeleteMessage: 'Todas as perguntas e respostas desta conversa serão removidas deste navegador.',
+    confirmClearTitle: 'Limpar todo o histórico?', confirmClearMessage: 'Todas as conversas salvas serão removidas deste navegador.',
+    confirm: 'Excluir', dismiss: 'Manter', savedAnswer: 'Resposta salva', storageWarning: 'O histórico não pode ser salvo neste navegador. A conversa ficará disponível enquanto esta página estiver aberta.', close: 'Fechar',
     brandTagline: 'Sua Pokédex inteligente', newQuestion: 'Nova pergunta', assistantName: 'Assistente Pokémon',
     suggestedQuestions: 'Perguntas sugeridas', trainer: 'Treinador(a)', journey: 'Sua jornada Pokémon',
     breadcrumb: 'Seu espaço', pageTitle: 'Uma pergunta. Novas descobertas.',
@@ -36,6 +44,11 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
   },
   en: {
     cancel: 'Cancel', retrying: 'Retry {attempt} of 3; trying again...',
+    history: 'Previous conversations', historyEmpty: 'Your completed questions will appear here.',
+    clearHistory: 'Clear history', deleteConversation: 'Delete conversation',
+    confirmDeleteTitle: 'Delete this conversation?', confirmDeleteMessage: 'All questions and answers in this conversation will be removed from this browser.',
+    confirmClearTitle: 'Clear all history?', confirmClearMessage: 'All saved conversations will be removed from this browser.',
+    confirm: 'Delete', dismiss: 'Keep', savedAnswer: 'Saved answer', storageWarning: 'History cannot be saved in this browser. This conversation will remain available while this page is open.', close: 'Close',
     brandTagline: 'Your intelligent Pokédex', newQuestion: 'New question', assistantName: 'Pokémon Assistant',
     suggestedQuestions: 'Suggested questions', trainer: 'Trainer', journey: 'Your Pokémon journey',
     breadcrumb: 'Your space', pageTitle: 'One question. New discoveries.',
