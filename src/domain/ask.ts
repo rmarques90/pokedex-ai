@@ -33,6 +33,12 @@ export const PokemonLookupSchema = z.discriminatedUnion('kind', [
 ]);
 export type PokemonLookup = z.infer<typeof PokemonLookupSchema>;
 
+export const PokemonSemanticSearchSchema = z.object({
+  query: z.string().trim().min(1).max(500),
+  limit: z.number().int().min(1).max(10).default(5),
+}).strict();
+export type PokemonSemanticSearch = z.infer<typeof PokemonSemanticSearchSchema>;
+
 export const AskResultSchema = z.object({
   answer: z.string().trim().min(1),
   abstained: z.boolean(),

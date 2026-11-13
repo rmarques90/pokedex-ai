@@ -3,6 +3,7 @@ import { ModelGenerationError, PromptGuardrailError, RetrievalError, type AskRes
 import { AskStreamEventSchema, type AskStreamUpdate } from '../domain/ask-stream.js';
 import { ConversationAskRequestSchema, ConversationListQuerySchema, ConversationUserIdSchema, type ConversationAskContext, type ConversationDetail, type ConversationPage } from '../domain/conversation.js';
 import { isRetryableOpenRouterFailure } from '../service/openrouter-diagnostics.js';
+import type { McpHttpEndpoint } from './mcp-server.js';
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
@@ -15,6 +16,7 @@ export interface AskHttpServerOptions {
   allowedOrigins?: readonly string[];
   login?: UserLoginHandler;
   conversations?: ConversationHttpService;
+  mcp?: McpHttpEndpoint;
 }
 
 class ClientRequestError extends Error {
@@ -37,7 +39,7 @@ export type UserLoginHandler = (input: unknown) => unknown | Promise<unknown>;
 export function createAskHttpServer(ask: AskHandler, options: AskHttpServerOptions = {}, askStream?: AskStreamHandler): Server {
   const allowedOrigins = new Set((options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS).map(normalizeConfiguredOrigin));
   return createServer((request, response) => {
-    void handleRequest(request, response, ask, allowedOrigins, askStream, options.login, options.conversations);
+    void handleRequest(request, response, ask, allowedOrigins, askStream, options.login, options.conversations, options.mcp);
   });
 }
 
@@ -66,14 +68,24 @@ async function handleRequest(
   askStream?: AskStreamHandler,
   login?: UserLoginHandler,
   conversations?: ConversationHttpService,
+  mcp?: McpHttpEndpoint,
 ): Promise<void> {
+  const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
+  if (pathname === '/mcp') {
+    if (!mcp) {
+      sendJson(response, 404, { error: 'Route not found.' });
+      return;
+    }
+    await mcp.handle(request, response);
+    return;
+  }
+
   const requestOrigin = request.headers.origin;
   if (requestOrigin !== undefined && !allowedOrigins.has(normalizeRequestOrigin(requestOrigin))) {
     sendJson(response, 403, { error: 'Request origin is not allowed.' });
     return;
   }
 
-  const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
   if (pathname.startsWith('/users/')) {
     await handleConversationRoute(request, response, pathname, conversations);
     return;

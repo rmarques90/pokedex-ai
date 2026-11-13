@@ -2,6 +2,7 @@ import {
   AskQuestionSchema,
   AskResultSchema,
   PokemonLookupSchema,
+  PokemonSemanticSearchSchema,
   ModelGenerationError,
   RetrievalError,
   RetrievedEvidenceSchema,
@@ -33,6 +34,40 @@ export interface GeneratedAnswerResult {
   answer: string;
   abstained: boolean;
   usedPokemonIds: number[];
+}
+
+export async function lookupPokemonEvidence(criteriaInput: unknown, dependencies: AnswerQuestionDependencies): Promise<RetrievedEvidence[]> {
+  const criteria = PokemonLookupSchema.parse(criteriaInput);
+  let retrieved: RetrievedEvidence[];
+  try {
+    retrieved = (await dependencies.store.lookup(dependencies.collectionName, criteria))
+      .map((item) => RetrievedEvidenceSchema.parse(item));
+  } catch (error) {
+    if (error instanceof RetrievalError) throw error;
+    throw new RetrievalError('Pokemon evidence retrieval failed.', { cause: error });
+  }
+  return dependencies.guardrail.checkEvidence(retrieved);
+}
+
+export async function searchPokemonEvidence(searchInput: unknown, dependencies: AnswerQuestionDependencies): Promise<RetrievedEvidence[]> {
+  const { query, limit } = PokemonSemanticSearchSchema.parse(searchInput);
+  const guardedQuestion = await withOpenRouterDiagnostics({
+    stage: 'prompt_safety', model: PROMPT_SAFETY_MODEL, logger: dependencies.diagnosticLogger,
+    operation: () => dependencies.guardrail.checkQuestion(query),
+  });
+  const vector = await withOpenRouterDiagnostics({
+    stage: 'query_embedding', model: EMBEDDING_MODEL, logger: dependencies.diagnosticLogger,
+    operation: () => embedQuery(dependencies.embeddings, guardedQuestion),
+  });
+  let retrieved: RetrievedEvidence[];
+  try {
+    retrieved = (await dependencies.store.searchByVector(dependencies.collectionName, vector, limit))
+      .map((item) => RetrievedEvidenceSchema.parse(item));
+  } catch (error) {
+    if (error instanceof RetrievalError) throw error;
+    throw new RetrievalError('Pokemon evidence retrieval failed.', { cause: error });
+  }
+  return dependencies.guardrail.checkEvidence(retrieved);
 }
 
 export async function answerQuestion(questionInput: unknown, dependencies: AnswerQuestionDependencies, memory: AnswerMemoryContext = {}): Promise<AskResult> {

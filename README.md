@@ -17,7 +17,7 @@ The repository includes this static homepage sample to demonstrate the project's
 
 Project dependencies:
 
-- **Runtime:** React and React DOM for the frontend; [Zod](https://zod.dev/) for data validation; [LangChain](https://js.langchain.com/) and [OpenRouter](https://openrouter.ai/) for LLMs and embeddings; and [LanceDB](https://lancedb.github.io/lancedb/) for local vector storage
+- **Runtime:** React and React DOM for the frontend; [Zod](https://zod.dev/) for data validation; [LangChain](https://js.langchain.com/) and [OpenRouter](https://openrouter.ai/) for LLMs and embeddings; [LanceDB](https://lancedb.github.io/lancedb/) for local vector storage; and the official MCP TypeScript SDK for the optional remote tool endpoint
 - **Development:** TypeScript, `tsx`, Vite, and `concurrently`; `@types/node` and React type definitions
 
 ## Installation
@@ -58,6 +58,40 @@ The frontend runs at `http://localhost:5173` and proxies `/ask` requests to the 
 - `POST /ask/stream` accepts the same `{ "question": "..." }` JSON body and returns named server-sent events: `delta` appends answer text, `replace` resets or corrects the draft, `complete` carries the validated final result and sources, and `error` carries a safe message plus a retryable flag. Validation errors are ordinary JSON responses before the stream starts.
 
 The web UI uses `/ask/stream`, renders answer text as it arrives, and offers a cancel control. It retries transient network failures, incomplete streams, HTTP 429/5xx responses, and retryable stream errors up to three times after the first attempt, with bounded backoff. User cancellation and non-retryable client errors are not retried. The stream uses the same retrieval, prompt-safety, and source validation flow as `/ask`; general-knowledge answers complete without RAG sources.
+
+### MCP server for external AI clients
+
+The API can expose read-only Pokédex RAG data through Model Context Protocol (MCP) using Streamable HTTP at `http://localhost:3000/mcp`. MCP is disabled by default. To enable it, copy `.env.example` to `.env`, set `MCP_ENABLED=true`, and set `MCP_AUTH_TOKEN` to a randomly generated secret containing at least 32 bytes. Startup fails with a configuration error when the token is missing or shorter than 32 bytes. The command below generates a 256-bit token represented by 64 hexadecimal characters:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+Keep the generated value only in `.env` and your MCP client's private configuration; never commit or log it. Restart the API after changing the value to rotate the token. Semantic search also requires the existing `OPENROUTER_API_KEY` and a populated LanceDB collection.
+
+Configure an MCP client to use the URL above and send `Authorization: Bearer <your-token>` on every request. For clients using a JSON server configuration with URL and headers:
+
+```json
+{
+  "mcpServers": {
+    "pokedex-ai": {
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer <replace-with-your-private-token>"
+      }
+    }
+  }
+}
+```
+
+The server exposes two read-only tools:
+
+- `lookup_pokemon` accepts exactly one of `{ "id": 25 }`, `{ "name": "pikachu" }`, or `{ "type": "electric" }` and returns `{ "items": [...] }` with indexed evidence and source URLs. No matches return an empty `items` array.
+- `search_pokemon` accepts `{ "query": "Pokemon that can fly", "limit": 5 }`. `limit` is optional, defaults to 5, and accepts values from 1 to 10. It returns retrieved evidence and source URLs, not an LLM-generated answer.
+
+Natural-language search runs the existing prompt-safety classifier before embedding. Both tools screen retrieved evidence with the existing prompt-injection guardrail; returned text is still untrusted input for the client AI. Authentication failures return HTTP 401. The in-memory limiter allows 30 MCP HTTP requests per peer address every 60 seconds, counting initialization, discovery, and tool requests; excess calls return HTTP 429 with `Retry-After`.
+
+This proof of concept uses one shared bearer token and a per-process in-memory rate limit. It does not identify individual clients, coordinate quotas across API instances, or trust reverse-proxy forwarding headers. Keep it on a controlled network; it is not production-grade authentication or distributed abuse protection.
 
 ### Local API access
 

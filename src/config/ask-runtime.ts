@@ -2,9 +2,10 @@ import {
   AskRuntimeConfigSchema,
   AskRuntimeConfigurationError,
   type AskResult,
+  type RetrievedEvidence,
 } from '../domain/ask.js';
 import { createOpenRouterAnswerGenerator, type PokemonAnswerGenerator } from '../service/openrouter-chat-model.js';
-import { answerQuestion, type AnswerQuestionDependencies } from '../service/answer-question.js';
+import { answerQuestion, lookupPokemonEvidence, searchPokemonEvidence, type AnswerQuestionDependencies } from '../service/answer-question.js';
 import { streamAnswerQuestion } from '../service/answer-question.js';
 import type { AskStreamUpdate } from '../domain/ask-stream.js';
 import { createOpenRouterPromptSafetyClassifier, type PromptSafetyClassifier } from '../service/openrouter-prompt-safety.js';
@@ -33,6 +34,8 @@ export interface AskServiceRuntimeOptions {
 export interface AskService {
   ask(question: unknown, memoryContext?: string): Promise<AskResult>;
   askStream?(question: unknown, signal: AbortSignal, emit: (update: AskStreamUpdate) => void, memoryContext?: string): Promise<AskResult>;
+  lookupPokemon?(criteria: unknown): Promise<RetrievedEvidence[]>;
+  searchPokemon?(input: unknown): Promise<RetrievedEvidence[]>;
   memoryExtractor?: ConversationMemoryExtractor;
 }
 
@@ -65,6 +68,8 @@ export async function createAskService(options: AskServiceRuntimeOptions): Promi
   return {
     ask: (question, memoryContext) => answerQuestion(question, dependencies, { memoryContext }),
     askStream: (question, signal, emit, memoryContext) => streamAnswerQuestion(question, dependencies, signal, emit, { memoryContext }),
+    lookupPokemon: (criteria) => lookupPokemonEvidence(criteria, dependencies),
+    searchPokemon: (input) => searchPokemonEvidence(input, dependencies),
     memoryExtractor,
   };
 }

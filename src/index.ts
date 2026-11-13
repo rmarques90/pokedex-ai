@@ -8,6 +8,8 @@ import { SqliteUserStore, type ConversationStore, type UserStore } from './store
 import { createUserIdentityService } from './service/user-identity.js';
 import { buildMemoryContext, createConversationService } from './service/conversation-service.js';
 import { createMemoryExtractionWorker } from './service/memory-extraction-worker.js';
+import { readMcpRuntimeConfig } from './http/mcp-auth.js';
+import { createMcpHttpEndpoint, type McpHttpEndpoint } from './http/mcp-server.js';
 
 export interface ApiServerOptions {
   service?: AskService;
@@ -21,7 +23,9 @@ export interface ApiServerOptions {
 }
 
 export async function startApiServer(options: ApiServerOptions = {}): Promise<Server> {
-  const service = options.service ?? await createAskService({ environment: options.environment ?? process.env });
+  const environment = options.environment ?? process.env;
+  const mcpConfig = readMcpRuntimeConfig(environment);
+  const service = options.service ?? await createAskService({ environment });
   const userStore = options.userStore ?? (options.createUserStore ?? (() => new SqliteUserStore()))();
   const identityService = createUserIdentityService(userStore);
   const conversationStore = options.conversationStore ?? (isConversationStore(userStore) ? userStore : undefined);
@@ -29,7 +33,9 @@ export async function startApiServer(options: ApiServerOptions = {}): Promise<Se
   const worker = conversationStore && service.memoryExtractor
     ? createMemoryExtractionWorker({ store: conversationStore, extractor: service.memoryExtractor, onError: () => undefined })
     : undefined;
+  let mcpEndpoint: McpHttpEndpoint | undefined;
   try {
+    if (mcpConfig.enabled) mcpEndpoint = createMcpHttpEndpoint(service, mcpConfig.token!);
     const ask = async (question: string, context: { userId: string; conversationId: string }) => {
       if (!conversationStore || !conversationService) throw new Error('Conversation persistence is unavailable.');
       conversationService.validateAsk(context);
@@ -56,14 +62,25 @@ export async function startApiServer(options: ApiServerOptions = {}): Promise<Se
       allowedOrigins: options.allowedOrigins ?? DEFAULT_FRONTEND_ORIGINS,
       login: (input) => identityService.login(input),
       conversations: conversationService,
+      mcp: mcpEndpoint,
     }, askStream);
     worker?.start();
     server.once('close', () => {
-      if (worker) void worker.stop().finally(() => userStore.close());
-      else userStore.close();
+      void (async () => {
+        try {
+          await worker?.stop();
+        } finally {
+          try {
+            await mcpEndpoint?.close();
+          } finally {
+            userStore.close();
+          }
+        }
+      })();
     });
     return server;
   } catch (error) {
+    await mcpEndpoint?.close();
     userStore.close();
     throw error;
   }
