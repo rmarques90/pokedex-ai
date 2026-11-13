@@ -16,6 +16,8 @@ import {
 import { createPromptInjectionGuardrail, type PromptInjectionGuardrail } from '../service/prompt-injection-guardrail.js';
 import { connectLocalVectorStore, type LocalVectorStoreHandle } from '../store/local-lancedb.js';
 import { logOpenRouterFailure, type OpenRouterDiagnosticLogger } from '../service/openrouter-diagnostics.js';
+import { createOpenRouterMemoryExtractor } from '../service/openrouter-memory-extractor.js';
+import type { ConversationMemoryExtractor } from '../service/memory-extraction-worker.js';
 
 export interface AskServiceRuntimeOptions {
   environment: NodeJS.ProcessEnv;
@@ -24,12 +26,14 @@ export interface AskServiceRuntimeOptions {
   createGenerator?: (apiKey: string) => PokemonAnswerGenerator;
   createGuardrail?: (apiKey: string) => PromptInjectionGuardrail;
   createPromptSafetyClassifier?: (apiKey: string) => PromptSafetyClassifier;
+  createMemoryExtractor?: (apiKey: string) => ConversationMemoryExtractor;
   diagnosticLogger?: OpenRouterDiagnosticLogger;
 }
 
 export interface AskService {
-  ask(question: unknown): Promise<AskResult>;
-  askStream?(question: unknown, signal: AbortSignal, emit: (update: AskStreamUpdate) => void): Promise<AskResult>;
+  ask(question: unknown, memoryContext?: string): Promise<AskResult>;
+  askStream?(question: unknown, signal: AbortSignal, emit: (update: AskStreamUpdate) => void, memoryContext?: string): Promise<AskResult>;
+  memoryExtractor?: ConversationMemoryExtractor;
 }
 
 export function readAskRuntimeConfig(environment: NodeJS.ProcessEnv) {
@@ -46,6 +50,7 @@ export async function createAskService(options: AskServiceRuntimeOptions): Promi
   const { store } = await (options.connectStore ?? connectLocalVectorStore)();
   const embeddings = (options.createEmbeddings ?? createOpenRouterEmbeddings)(config.openRouterApiKey);
   const generator = (options.createGenerator ?? createOpenRouterAnswerGenerator)(config.openRouterApiKey);
+  const memoryExtractor = (options.createMemoryExtractor ?? createOpenRouterMemoryExtractor)(config.openRouterApiKey);
   const guardrail = (options.createGuardrail ?? ((apiKey) => createPromptInjectionGuardrail(
     (options.createPromptSafetyClassifier ?? createOpenRouterPromptSafetyClassifier)(apiKey),
   )))(config.openRouterApiKey);
@@ -58,8 +63,9 @@ export async function createAskService(options: AskServiceRuntimeOptions): Promi
     diagnosticLogger: options.diagnosticLogger ?? logOpenRouterFailure,
   };
   return {
-    ask: (question) => answerQuestion(question, dependencies),
-    askStream: (question, signal, emit) => streamAnswerQuestion(question, dependencies, signal, emit),
+    ask: (question, memoryContext) => answerQuestion(question, dependencies, { memoryContext }),
+    askStream: (question, signal, emit, memoryContext) => streamAnswerQuestion(question, dependencies, signal, emit, { memoryContext }),
+    memoryExtractor,
   };
 }
 

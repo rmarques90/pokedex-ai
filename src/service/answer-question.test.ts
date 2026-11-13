@@ -57,6 +57,7 @@ function dependencies(overrides: {
   const calls: string[] = [];
   const requestedLimits: number[] = [];
   const lookups: unknown[] = [];
+  const memoryContexts: Array<string | undefined> = [];
   let modelCalls = 0;
   const store: Pick<PokemonVectorStore, 'searchByVector' | 'lookup'> = {
     async searchByVector(name, vector, topK) {
@@ -84,6 +85,7 @@ function dependencies(overrides: {
   const generator: PokemonAnswerGenerator = {
     async generate(input) {
       calls.push('model');
+      memoryContexts.push(input.memoryContext);
       modelCalls += 1;
       assert.equal(input.question, questionText);
       if (input.mode === 'general') assert.deepEqual(input.evidence, []);
@@ -117,6 +119,7 @@ function dependencies(overrides: {
     calls,
     requestedLimits,
     lookups,
+    memoryContexts,
     get modelCalls() { return modelCalls; },
   };
 }
@@ -132,6 +135,13 @@ test('embeds, retrieves five records, guards the question and context, and cites
     abstained: false,
     sources: bulbasaur.sources,
   });
+});
+
+test('passes memory into a separate generator context without changing evidence or citations', async () => {
+  const fixture = dependencies();
+  const result = await answerQuestion('Why does the seed grow?', fixture.dependencies, { memoryContext: '[response_preference] Prefers concise answers' });
+  assert.equal(result.sources[0]?.pokemonId, 1);
+  assert.deepEqual(fixture.memoryContexts, ['[response_preference] Prefers concise answers']);
 });
 
 test('uses general Pokemon knowledge with no evidence when the collection returns no matches', async () => {

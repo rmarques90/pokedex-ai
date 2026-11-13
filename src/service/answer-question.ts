@@ -18,6 +18,7 @@ import { CHAT_MODEL, EMBEDDING_MODEL, PROMPT_SAFETY_MODEL } from '../constants.j
 import { withOpenRouterDiagnostics, type OpenRouterDiagnosticLogger } from './openrouter-diagnostics.js';
 
 export const INITIAL_RETRIEVAL_TOP_K = 5;
+export interface AnswerMemoryContext { memoryContext?: string }
 
 export interface AnswerQuestionDependencies {
   collectionName: string;
@@ -34,7 +35,7 @@ export interface GeneratedAnswerResult {
   usedPokemonIds: number[];
 }
 
-export async function answerQuestion(questionInput: unknown, dependencies: AnswerQuestionDependencies): Promise<AskResult> {
+export async function answerQuestion(questionInput: unknown, dependencies: AnswerQuestionDependencies, memory: AnswerMemoryContext = {}): Promise<AskResult> {
   const question = AskQuestionSchema.parse(questionInput);
   const guardedQuestion = await withOpenRouterDiagnostics({
     stage: 'prompt_safety', model: PROMPT_SAFETY_MODEL, logger: dependencies.diagnosticLogger,
@@ -71,7 +72,7 @@ export async function answerQuestion(questionInput: unknown, dependencies: Answe
     try {
       result = await withOpenRouterDiagnostics({
         stage: 'answer_generation', model: CHAT_MODEL, logger: dependencies.diagnosticLogger,
-        operation: () => dependencies.generator.generate({ question: guardedQuestion, evidence, mode }),
+        operation: () => dependencies.generator.generate({ question: guardedQuestion, evidence, mode, ...(memory.memoryContext ? { memoryContext: memory.memoryContext } : {}) }),
       });
     } catch (error) {
       if (error instanceof ModelGenerationError) throw error;
@@ -120,6 +121,7 @@ export async function streamAnswerQuestion(
   dependencies: AnswerQuestionDependencies,
   signal: AbortSignal,
   emit: (update: AskStreamUpdate) => void,
+  memory: AnswerMemoryContext = {},
 ): Promise<AskResult> {
   const question = AskQuestionSchema.parse(questionInput);
   const guardedQuestion = await withOpenRouterDiagnostics({
@@ -153,7 +155,7 @@ export async function streamAnswerQuestion(
 
   const generate = async (mode: PokemonAnswerMode, evidence: RetrievedEvidence[]): Promise<GeneratedAnswerResult> => {
     try {
-      const input = { question: guardedQuestion, evidence, mode };
+      const input = { question: guardedQuestion, evidence, mode, ...(memory.memoryContext ? { memoryContext: memory.memoryContext } : {}) };
       const result = dependencies.generator.stream
         ? await withOpenRouterDiagnostics({
             stage: 'answer_stream', model: CHAT_MODEL, logger: dependencies.diagnosticLogger,

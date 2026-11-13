@@ -4,12 +4,18 @@ import type { Server } from 'node:http';
 import test from 'node:test';
 import { PromptGuardrailError, PromptSafetyModelError, type AskResult } from '../domain/ask.js';
 import { createUserIdentityService } from '../service/user-identity.js';
+import { createConversationService } from '../service/conversation-service.js';
+import { SqliteUserStore } from '../store/sqlite-user-store.js';
 import { createAskHttpServer, type AskHttpServerOptions, type AskStreamHandler } from './server.js';
 
 const success: AskResult = {
   answer: 'Bulbasaur is a Grass and Poison Pokémon.',
   abstained: false,
   sources: [{ pokemonId: 1, pokemonName: 'bulbasaur', url: 'https://bulbapedia.bulbagarden.net/wiki/Bulbasaur_(Pok%C3%A9mon)' }],
+};
+const requestIdentity = {
+  userId: '00000000-0000-4000-8000-000000000001',
+  conversationId: '00000000-0000-4000-8000-000000000002',
 };
 
 async function withServer<T>(
@@ -33,11 +39,18 @@ async function withServer<T>(
 }
 
 async function postStream(baseUrl: string, body: string, headers: Record<string, string> = { 'content-type': 'application/json' }): Promise<Response> {
-  return fetch(`${baseUrl}/ask/stream`, { method: 'POST', headers, body });
+  return fetch(`${baseUrl}/ask/stream`, { method: 'POST', headers, body: withIdentity(body) });
 }
 
 async function post(baseUrl: string, body: string, headers: Record<string, string> = { 'content-type': 'application/json' }): Promise<Response> {
-  return fetch(`${baseUrl}/ask`, { method: 'POST', headers, body });
+  return fetch(`${baseUrl}/ask`, { method: 'POST', headers, body: withIdentity(body) });
+}
+
+function withIdentity(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    return JSON.stringify({ ...requestIdentity, ...parsed });
+  } catch { return body; }
 }
 
 test('POST /ask returns the answer and source URLs', async () => {
@@ -48,6 +61,45 @@ test('POST /ask returns the answer and source URLs', async () => {
     assert.deepEqual(await response.json(), success);
     assert.equal(receivedQuestion, 'What type is Bulbasaur?');
   });
+});
+
+test('POST /ask requires a valid identity and conversation context', async () => {
+  let calls = 0;
+  await withServer(async () => { calls += 1; return success; }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/ask`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Pikachu?' }),
+    });
+    assert.equal(response.status, 400);
+    assert.equal(calls, 0);
+  });
+});
+
+test('conversation HTTP routes list, read, and delete only records owned by the requested user', async () => {
+  const store = new SqliteUserStore({ databasePath: ':memory:' });
+  const user = store.findOrCreateByName('Ash', 'ash');
+  const other = store.findOrCreateByName('Misty', 'misty');
+  const conversationId = '00000000-0000-4000-8000-000000000015';
+  store.appendCompletedInteraction({ userId: user.id, conversationId, question: 'My question', result: success });
+  const service = createConversationService(store);
+  try {
+    await withServer(async () => success, async (baseUrl) => {
+      const list = await fetch(`${baseUrl}/users/${user.id}/conversations`);
+      assert.equal(list.status, 200);
+      assert.equal((await list.json()).conversations.length, 1);
+      const hidden = await fetch(`${baseUrl}/users/${other.id}/conversations/${conversationId}`);
+      assert.equal(hidden.status, 404);
+      assert.deepEqual(await hidden.json(), { error: 'Conversation not found.' });
+      const detail = await fetch(`${baseUrl}/users/${user.id}/conversations/${conversationId}`);
+      assert.equal(detail.status, 200);
+      assert.equal((await detail.json()).interactions[0].question, 'My question');
+      const deniedDelete = await fetch(`${baseUrl}/users/${other.id}/conversations/${conversationId}`, { method: 'DELETE' });
+      assert.equal(deniedDelete.status, 404);
+      assert.equal(store.getConversation(user.id, conversationId)?.interactions.length, 1);
+      const deleted = await fetch(`${baseUrl}/users/${user.id}/conversations/${conversationId}`, { method: 'DELETE' });
+      assert.equal(deleted.status, 200);
+      assert.equal(store.getConversation(user.id, conversationId), null);
+    }, { conversations: service });
+  } finally { store.close(); }
 });
 
 test('POST /ask/stream sends named events and completes with the AskResult', async () => {
@@ -92,7 +144,7 @@ test('aborts the streaming handler when the client disconnects', async () => {
     const response = await fetch(`${baseUrl}/ask/stream`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ question: 'Pikachu?' }),
+      body: JSON.stringify({ question: 'Pikachu?', ...requestIdentity }),
       signal: controller.signal,
     });
     const reader = response.body?.getReader();

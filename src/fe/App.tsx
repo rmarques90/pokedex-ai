@@ -1,30 +1,38 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { askPokemonStream, loginUser, type AskStreamOptions } from './api-client.js';
+import { askPokemonStream, clearConversations, deleteConversation, getConversation, listConversations, loginUser, type AskStreamOptions } from './api-client.js';
 import type { AskResult } from '../domain/ask.js';
 import type { PublicUser } from '../domain/user.js';
 import type { BrowserHistoryDocument, BrowserHistoryEntry } from '../domain/browser-history.js';
-import { createHistoryStore, type HistoryStore } from './history-store.js';
+import { HISTORY_STORAGE_KEY } from './history-store.js';
 import { readLanguagePreference, saveLanguagePreference, UI_COPY, type Language } from './i18n.js';
 import { clearActiveUser, readActiveUser, saveActiveUser } from './user-session.js';
 
-export type AskAction = (question: string, options?: AskStreamOptions) => Promise<AskResult>;
+export type AskAction = (question: string, options: AskStreamOptions) => Promise<AskResult>;
 type Confirmation = { kind: 'clear' } | { kind: 'delete'; conversationId: string };
 
-export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAction; login?: (name: string) => Promise<PublicUser> }) {
+type HistoryPageLoader = (userId: string, cursor?: string) => Promise<{ entries: BrowserHistoryEntry[]; cursor: string | null }>;
+
+export function App({
+  ask = askPokemonStream,
+  login = loginUser,
+  loadHistoryPage = loadConversationPage,
+  removeConversation = deleteConversation,
+  clearHistory = clearConversations,
+}: {
+  ask?: AskAction;
+  login?: (name: string) => Promise<PublicUser>;
+  loadHistoryPage?: HistoryPageLoader;
+  removeConversation?: typeof deleteConversation;
+  clearHistory?: typeof clearConversations;
+}) {
   const [language, setLanguage] = useState<Language>(() => readLanguagePreference());
   const [user, setUser] = useState<PublicUser | null>(() => readActiveUser(getLocalStorage()));
   const [loginName, setLoginName] = useState('');
   const [loginError, setLoginError] = useState(false);
-  const storeRef = useRef<HistoryStore | null>(null);
-  if (!storeRef.current) {
-    let storage: Storage | null = null;
-    try { storage = typeof window === 'undefined' ? null : window.localStorage; } catch { storage = null; }
-    storeRef.current = createHistoryStore({ storage });
-  }
-  const store = storeRef.current;
-  const initial = useMemo(() => store.load(), [store]);
-  const [history, setHistory] = useState<BrowserHistoryDocument>(initial.document);
-  const [storageWarning, setStorageWarning] = useState(!initial.persistent);
+  const [history, setHistory] = useState<BrowserHistoryDocument>(() => ({ version: 1, activeConversationId: crypto.randomUUID(), entries: [] }));
+  const [historyError, setHistoryError] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [nextConversationCursor, setNextConversationCursor] = useState<string | null>(null);
   const [question, setQuestion] = useState('');
   const [submittedQuestion, setSubmittedQuestion] = useState('');
   const [error, setError] = useState(false);
@@ -46,6 +54,21 @@ export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAc
     document.documentElement.lang = language === 'pt' ? 'pt-BR' : 'en';
   }, [language]);
   useEffect(() => () => activeRequest.current?.abort(), []);
+  useEffect(() => {
+    try { getLocalStorage()?.removeItem(HISTORY_STORAGE_KEY); } catch { /* Legacy history is intentionally discarded. */ }
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setHistoryLoading(true); setHistoryError(false);
+    void loadHistoryPage(user.id).then(({ entries, cursor }) => {
+      if (cancelled) return;
+      setHistory((current) => ({ ...current, entries: [...entries, ...current.entries.filter((entry) => !entries.some((loaded) => loaded.id === entry.id))] }));
+      setNextConversationCursor(cursor);
+    }).catch(() => { if (!cancelled) setHistoryError(true); })
+      .finally(() => { if (!cancelled) setHistoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [user?.id]);
   useEffect(() => {
     if (!selectedEntry) return;
     modalRef.current?.focus();
@@ -77,21 +100,16 @@ export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAc
   }
   function logout() {
     cancel();
-    updateHistory(store.clear());
+    setHistory({ version: 1, activeConversationId: crypto.randomUUID(), entries: [] });
     clearActiveUser(getLocalStorage());
     setUser(null);
     setLoginName(''); setLoginError(false); setSubmittedQuestion('');
     setSelectedEntry(null); setConfirmation(null); setHistoryOpen(false);
   }
-  function updateHistory(next: { document: BrowserHistoryDocument; persistent: boolean }) {
-    setHistory(next.document);
-    setStorageWarning(!next.persistent);
-  }
-
   async function submit(event?: FormEvent, questionInput?: string) {
     event?.preventDefault();
     const normalized = (questionInput ?? question).trim();
-    if (!normalized || loading) return;
+    if (!normalized || loading || !user) return;
     setQuestion(normalized);
     setSubmittedQuestion(normalized);
     setError(false); setStreamingAnswer(''); setRetryAttempt(0); setLoading(true);
@@ -100,13 +118,16 @@ export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAc
     const conversationId = history.activeConversationId;
     try {
       const answer = await ask(normalized, {
+        userId: user.id,
+        conversationId,
         signal: controller.signal,
         onDelta: (text) => { if (activeRequest.current === controller) setStreamingAnswer((current) => current + text); },
         onReplace: (text) => { if (activeRequest.current === controller) setStreamingAnswer(text); },
         onRetry: (attempt) => { if (activeRequest.current === controller) setRetryAttempt(attempt); },
       });
       if (activeRequest.current === controller) {
-        updateHistory(store.append({ conversationId, question: normalized, result: answer }));
+        const entry: BrowserHistoryEntry = { id: crypto.randomUUID(), conversationId, createdAt: new Date().toISOString(), question: normalized, result: answer };
+        setHistory((current) => ({ ...current, entries: [...current.entries, entry] }));
         setQuestion('');
       }
     } catch {
@@ -124,16 +145,44 @@ export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAc
   }
   function startNewConversation() {
     cancel(); setQuestion(''); setSubmittedQuestion(''); setError(false);
-    updateHistory(store.startConversation());
+    setHistory((current) => ({ ...current, activeConversationId: crypto.randomUUID() }));
   }
   function confirmAction() {
     if (!confirmation) return;
-    if (confirmation.kind === 'clear') { cancel(); setQuestion(''); setSubmittedQuestion(''); updateHistory(store.clear()); }
-    else {
-      if (confirmation.conversationId === history.activeConversationId) { cancel(); setQuestion(''); setSubmittedQuestion(''); }
-      updateHistory(store.deleteConversation(confirmation.conversationId));
+    if (!user) return;
+    const action = confirmation;
+    const complete = () => {
+      setHistoryError(false);
+      setSelectedEntry(null); setConfirmation(null);
+    };
+    const fail = () => {
+      setHistoryError(true);
+      setConfirmation(null);
+    };
+    if (action.kind === 'clear') {
+      void clearHistory(user.id).then(() => {
+        cancel(); setQuestion(''); setSubmittedQuestion(''); setHistory({ version: 1, activeConversationId: crypto.randomUUID(), entries: [] }); setNextConversationCursor(null);
+        complete();
+      }).catch(fail);
+      return;
     }
-    setSelectedEntry(null); setConfirmation(null);
+    void removeConversation(user.id, action.conversationId).then(() => {
+      if (action.conversationId === history.activeConversationId) { cancel(); setQuestion(''); setSubmittedQuestion(''); }
+      const nextActiveConversationId = action.conversationId === history.activeConversationId ? crypto.randomUUID() : history.activeConversationId;
+      setHistory({ ...history, activeConversationId: nextActiveConversationId, entries: history.entries.filter((entry) => entry.conversationId !== action.conversationId) });
+      complete();
+    }).catch(fail);
+  }
+
+  async function loadMoreConversations() {
+    if (!user || !nextConversationCursor || historyLoading) return;
+    setHistoryLoading(true); setHistoryError(false);
+    try {
+      const { entries, cursor } = await loadHistoryPage(user.id, nextConversationCursor);
+      setHistory((current) => ({ ...current, entries: [...current.entries, ...entries.filter((entry) => !current.entries.some((existing) => existing.id === entry.id))] }));
+      setNextConversationCursor(cursor);
+    } catch { setHistoryError(true); }
+    finally { setHistoryLoading(false); }
   }
 
   const conversations = useMemo(() => {
@@ -172,11 +221,14 @@ export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAc
         <div className="side-heading">{copy.journey}</div>
         <button className="nav-item active" onClick={startNewConversation}><span>{'\u2726'}</span>{copy.assistantName}</button>
         <section className={`history-panel${historyOpen ? ' history-open' : ''}`} aria-label={copy.history}>
-          <div className="history-heading"><span>{copy.history}</span><button type="button" onClick={() => setConfirmation({ kind: 'clear' })} disabled={history.entries.length === 0 && !storageWarning} aria-label={copy.clearHistory} title={copy.clearHistory}>{'\u00d7'}</button></div>
+          <div className="history-heading"><span>{copy.history}</span><button type="button" onClick={() => setConfirmation({ kind: 'clear' })} disabled={history.entries.length === 0 && !historyError} aria-label={copy.clearHistory} title={copy.clearHistory}>{'\u00d7'}</button></div>
+          {historyError && <p className="history-error" role="alert">{copy.historyError}</p>}
+          {historyLoading && <p className="history-loading" aria-live="polite">{copy.loading}</p>}
           {conversations.length === 0 ? <p className="history-empty">{copy.historyEmpty}</p> : <div className="history-groups">{conversations.map((conversation) => <section className="history-group" key={conversation.id}>
             <div className="history-group-heading"><span>{formatTimestamp(conversation.latest, language)}</span><button type="button" onClick={() => setConfirmation({ kind: 'delete', conversationId: conversation.id })} aria-label={`${copy.deleteConversation}: ${conversation.entries[0]?.question ?? ''}`} title={copy.deleteConversation}>{'\u2715'}</button></div>
-            {conversation.entries.map((entry) => <button className="history-entry" key={entry.id} onClick={(event) => { modalOpener.current = event.currentTarget; setSelectedEntry(entry); setHistoryOpen(false); }}><span>{entry.question}</span><time dateTime={entry.createdAt}>{formatTimestamp(entry.createdAt, language)}</time></button>)}
+            {conversation.entries.map((entry) => <button className="history-entry" key={entry.id} onClick={(event) => { modalOpener.current = event.currentTarget; setHistory((current) => ({ ...current, activeConversationId: entry.conversationId })); setSelectedEntry(entry); setHistoryOpen(false); }}><span>{entry.question}</span><time dateTime={entry.createdAt}>{formatTimestamp(entry.createdAt, language)}</time></button>)}
           </section>)}</div>}
+          {nextConversationCursor && <button className="history-load-more" type="button" onClick={() => void loadMoreConversations()} disabled={historyLoading}>{copy.loadMoreHistory}</button>}
         </section>
         <div className="suggestion-title">{copy.suggestedQuestions}</div>
         <nav className="suggestions" aria-label={copy.suggestedQuestions}>{suggestions.map((item) => <button key={item} onClick={() => void submit(undefined, item)}>{item}<span>{'\u2197'}</span></button>)}</nav>
@@ -197,7 +249,6 @@ export function App({ ask = askPokemonStream, login = loginUser }: { ask?: AskAc
             <div className="input-row"><textarea id="question-input" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={copy.questionPlaceholder} rows={2} disabled={loading} onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} /><button type="submit" disabled={loading || !question.trim()}>{loading ? <span className="spinner"/> : <span>{'\u2726'}</span>}{copy.ask}</button></div>
             <div className="form-hint"><span aria-hidden="true">{String.fromCodePoint(0x21b5)}</span> {copy.keyboardHint}</div>
           </form>
-          {storageWarning && <div className="storage-warning" role="status">{copy.storageWarning}</div>}
           {loading && <article className="chat-turn pending-turn">
             <div className="chat-question"><span className="chat-avatar">{language === 'pt' ? 'Voc\u00ea' : 'You'}</span><p>{submittedQuestion}</p></div>
             <div className="state-card" role="status"><span className="spinner dark"/>{retryAttempt > 0 ? copy.retrying.replace('{attempt}', String(retryAttempt)) : copy.loading}<button className="cancel-button" type="button" onClick={cancel}>{copy.cancel}</button></div>
@@ -235,6 +286,19 @@ function AnswerCard({ entry, copy }: { entry: BrowserHistoryEntry; copy: (typeof
     {result.sources.length > 0 && <div className="sources"><strong>{copy.sourcesLabel}</strong><ul>{result.sources.map((source) => <li key={`${source.pokemonId}-${source.url}`}><a href={source.url} target="_blank" rel="noreferrer"><span className="source-id">#{String(source.pokemonId).padStart(3, '0')}</span>{source.pokemonName}<span className="source-host">{getSourceIdentity(source.url)}</span><span className="external-icon">{String.fromCodePoint(0x2197)}</span></a></li>)}</ul></div>}
     <footer className="answer-footer">{copy.footerNote}<span>{'\u2726'}</span></footer>
   </section>;
+}
+
+async function loadConversationPage(userId: string, cursor?: string): Promise<{ entries: BrowserHistoryEntry[]; cursor: string | null }> {
+  const page = await listConversations(userId, { limit: 20, ...(cursor ? { cursor } : {}) });
+  const details = await Promise.all(page.conversations.map((conversation) => getConversation(userId, conversation.id)));
+  const entries = details.flatMap((detail) => detail.interactions.map((interaction) => ({
+    id: interaction.id,
+    conversationId: interaction.conversationId,
+    createdAt: interaction.createdAt,
+    question: interaction.question,
+    result: interaction.result,
+  })));
+  return { entries, cursor: page.nextCursor };
 }
 
 function formatTimestamp(value: string, language: Language) {

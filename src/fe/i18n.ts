@@ -19,6 +19,7 @@ export interface UiCopy {
   history: string; historyEmpty: string; clearHistory: string; deleteConversation: string;
   confirmDeleteTitle: string; confirmDeleteMessage: string; confirmClearTitle: string; confirmClearMessage: string;
   confirm: string; dismiss: string; savedAnswer: string; storageWarning: string; close: string;
+  historyError: string; loadMoreHistory: string;
   loginTitle: string; loginSubtitle: string; nameLabel: string; namePlaceholder: string; loginAction: string;
   loginError: string; logout: string;
 }
@@ -29,8 +30,8 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     cancel: 'Cancelar', retrying: 'Tentativa {attempt} de 3; tentando novamente...',
     history: 'Conversas anteriores', historyEmpty: 'Suas perguntas concluídas aparecerão aqui.',
     clearHistory: 'Limpar histórico', deleteConversation: 'Excluir conversa',
-    confirmDeleteTitle: 'Excluir esta conversa?', confirmDeleteMessage: 'Todas as perguntas e respostas desta conversa serão removidas deste navegador.',
-    confirmClearTitle: 'Limpar todo o histórico?', confirmClearMessage: 'Todas as conversas salvas serão removidas deste navegador.',
+    confirmDeleteTitle: 'Excluir esta conversa?', confirmDeleteMessage: 'Todas as perguntas, respostas e memórias desta conversa serão excluídas.',
+    confirmClearTitle: 'Limpar todo o histórico?', confirmClearMessage: 'Todas as conversas, respostas e memórias desta conta serão excluídas.',
     confirm: 'Excluir', dismiss: 'Manter', savedAnswer: 'Resposta salva', storageWarning: 'O histórico não pode ser salvo neste navegador. A conversa ficará disponível enquanto esta página estiver aberta.', close: 'Fechar',
     brandTagline: 'Sua Pokédex inteligente', newQuestion: 'Nova pergunta', assistantName: 'Assistente Pokémon',
     suggestedQuestions: 'Perguntas sugeridas', trainer: 'Treinador(a)', journey: 'Sua jornada Pokémon',
@@ -43,6 +44,8 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     requestError: 'Não foi possível consultar a Pokédex. Tente novamente.', retry: 'Tentar novamente',
     answerLabel: 'Pokédex AI', insufficientEvidence: 'Os dados indexados não contêm informação suficiente para responder a esta pergunta.',
     generalKnowledge: 'Resposta baseada no conhecimento geral do modelo, sem refer\u00eancias do\u0020\u00edndice.',
+    historyError: 'N\u00e3o foi poss\u00edvel atualizar o hist\u00f3rico. Tente novamente.',
+    loadMoreHistory: 'Carregar mais conversas',
     sourcesLabel: 'Referências', footerNote: 'Confira os detalhes nas fontes.', languageSelector: '\u0049dioma da interface', keyboardHint: 'Enter para perguntar \u00b7 Shift+Enter para pular linha',
   },
   en: {
@@ -50,8 +53,8 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     cancel: 'Cancel', retrying: 'Retry {attempt} of 3; trying again...',
     history: 'Previous conversations', historyEmpty: 'Your completed questions will appear here.',
     clearHistory: 'Clear history', deleteConversation: 'Delete conversation',
-    confirmDeleteTitle: 'Delete this conversation?', confirmDeleteMessage: 'All questions and answers in this conversation will be removed from this browser.',
-    confirmClearTitle: 'Clear all history?', confirmClearMessage: 'All saved conversations will be removed from this browser.',
+    confirmDeleteTitle: 'Delete this conversation?', confirmDeleteMessage: 'All questions, answers, and memories in this conversation will be deleted.',
+    confirmClearTitle: 'Clear all history?', confirmClearMessage: 'All conversations, answers, and memories for this account will be deleted.',
     confirm: 'Delete', dismiss: 'Keep', savedAnswer: 'Saved answer', storageWarning: 'History cannot be saved in this browser. This conversation will remain available while this page is open.', close: 'Close',
     brandTagline: 'Your intelligent Pokédex', newQuestion: 'New question', assistantName: 'Pokémon Assistant',
     suggestedQuestions: 'Suggested questions', trainer: 'Trainer', journey: 'Your Pokémon journey',
@@ -64,6 +67,8 @@ export const UI_COPY: Readonly<Record<Language, UiCopy>> = {
     requestError: 'The Pokédex could not be reached. Please try again.', retry: 'Try again',
     answerLabel: 'Pokédex AI', insufficientEvidence: 'The indexed data does not contain enough information to answer this question.',
     generalKnowledge: 'Answer based on the model\'s general knowledge; no indexed references were used.',
+    historyError: 'Conversation history could not be updated. Please try again.',
+    loadMoreHistory: 'Load more conversations',
     sourcesLabel: 'References', footerNote: 'Check the sources for details.', languageSelector: 'Interface language', keyboardHint: 'Enter to ask \u00b7 Shift+Enter for a new line',
   },
 };

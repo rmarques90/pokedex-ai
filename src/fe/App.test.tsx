@@ -10,7 +10,7 @@ Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: do
 Object.defineProperty(globalThis, 'Node', { configurable: true, value: dom.window.Node });
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, writable: true, value: true });
 
-const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const { App } = await import('./App.js');
 const { HISTORY_STORAGE_KEY } = await import('./history-store.js');
 const { USER_STORAGE_KEY } = await import('./user-session.js');
@@ -24,6 +24,7 @@ const testUser = { id: '00000000-0000-4000-8000-000000000001', name: 'Ash' };
 beforeEach(() => {
   window.localStorage.setItem('pokedex-ai.language', 'pt');
   window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(testUser));
+  Object.defineProperty(globalThis, 'fetch', { configurable: true, writable: true, value: async () => new Response(JSON.stringify({ conversations: [], nextCursor: null }), { status: 200 }) });
 });
 afterEach(() => { cleanup(); window.localStorage.clear(); });
 after(() => dom.window.close());
@@ -160,7 +161,7 @@ test('keeps the submitted question and stream preview in the top pending turn, t
   assert.equal(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).filter((node) => node.textContent === 'Latest question').length, 1);
 });
 
-test('uses append order to break equal timestamps and leaves stored and sidebar history order unchanged', () => {
+test('loads API history in transcript/sidebar order and discards legacy localStorage conversations', async () => {
   const conversationId = '00000000-0000-4000-8000-000000000001';
   const timestamp = '2026-01-01T12:00:00.000Z';
   const entries = [
@@ -168,11 +169,13 @@ test('uses append order to break equal timestamps and leaves stored and sidebar 
     { id: '00000000-0000-4000-8000-000000000003', conversationId, createdAt: timestamp, question: 'Later appended question', result: { ...answer, answer: 'Later appended answer' } },
   ];
   window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify({ version: 1, activeConversationId: conversationId, entries }));
-  render(<App ask={async () => answer} />);
+  render(<App ask={async () => answer} loadHistoryPage={async () => ({ entries, cursor: null })} />);
 
+  await screen.findByRole('button', { name: /Later appended question/ });
+  fireEvent.click(screen.getByRole('button', { name: /Later appended question/ }));
   assert.deepEqual(Array.from(document.querySelectorAll('.chat-turn .chat-question p')).map((node) => node.textContent), ['Later appended question', 'Earlier appended question']);
   assert.deepEqual(Array.from(document.querySelectorAll('.history-entry > span')).map((node) => node.textContent), ['Earlier appended question', 'Later appended question']);
-  assert.deepEqual(JSON.parse(window.localStorage.getItem(HISTORY_STORAGE_KEY)!).entries.map((entry: { question: string }) => entry.question), ['Earlier appended question', 'Later appended question']);
+  await waitFor(() => assert.equal(window.localStorage.getItem(HISTORY_STORAGE_KEY), null));
 });
 
 test('failure, retry, and cancellation do not change previously completed turns', async () => {
@@ -269,17 +272,12 @@ test('labels an abstained response as insufficient evidence', async () => {
   assert.ok(screen.getByText(/Os dados indexados não contêm informação suficiente/));
 });
 
-test('reload restores the local conversation transcript and language preference', async () => {
+test('reload preserves language preference and starts with a fresh conversation', () => {
   const view = render(<App ask={async () => answer} />);
   fireEvent.click(screen.getByRole('button', { name: 'English' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Your question' }), { target: { value: 'Question' } });
-  fireEvent.click(screen.getByRole('button', { name: /Ask/ }));
-  await screen.findByText(answer.answer);
   view.unmount();
   render(<App ask={async () => answer} />);
   assert.equal((screen.getByRole('textbox', { name: 'Your question' }) as HTMLTextAreaElement).value, '');
-  assert.ok(screen.getByText(answer.answer));
-  assert.ok(document.querySelector('.history-entry'));
   assert.equal(screen.getByRole('button', { name: 'English' }).getAttribute('aria-pressed'), 'true');
 });
 
@@ -301,19 +299,20 @@ test('saved history opens a result modal without changing the active transcript'
 });
 
 test('deleting a confirmed conversation removes its history and clears the active transcript', async () => {
-  render(<App ask={async () => answer} />);
+  render(<App ask={async () => answer} removeConversation={async () => {}} />);
   fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Delete this conversation' } });
   fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
   await screen.findByText(answer.answer);
   fireEvent.click(screen.getByRole('button', { name: /Excluir conversa: Delete this conversation/ }));
   assert.ok(screen.getByRole('alertdialog'));
   fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
-  await waitFor(() => assert.equal(screen.queryByText(answer.answer), null));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(screen.queryByText(answer.answer), null);
   assert.equal(screen.queryByRole('button', { name: /Delete this conversation/ }), null);
 });
 
 test('canceling conversation deletion preserves the saved conversation', async () => {
-  render(<App ask={async () => answer} />);
+  render(<App ask={async () => answer} removeConversation={async () => {}} />);
   fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Keep this conversation' } });
   fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
   await screen.findByText(answer.answer);
@@ -335,14 +334,15 @@ test('starting a new conversation clears the transcript while keeping prior ques
 });
 
 test('clear history requires confirmation and removes saved conversations', async () => {
-  render(<App ask={async () => answer} />);
+  render(<App ask={async () => answer} clearHistory={async () => {}} />);
   fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Clear this history' } });
   fireEvent.click(screen.getByRole('button', { name: /Perguntar/ }));
   await screen.findByText(answer.answer);
   fireEvent.click(screen.getByRole('button', { name: 'Limpar histórico' }));
   assert.ok(screen.getByRole('alertdialog'));
   fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
-  await waitFor(() => assert.equal(screen.queryByText(answer.answer), null));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(screen.queryByText(answer.answer), null);
   assert.equal(document.querySelector('.history-entry'), null);
 });
 
@@ -388,7 +388,7 @@ test('logout aborts active work, removes all local conversation history, and pre
   fireEvent.change(input, { target: { value: 'Saved conversation' } });
   fireEvent.submit(form);
   await screen.findByText(answer.answer);
-  assert.ok(window.localStorage.getItem(HISTORY_STORAGE_KEY));
+  assert.equal(window.localStorage.getItem(HISTORY_STORAGE_KEY), null);
   fireEvent.change(screen.getByRole('textbox', { name: 'Sua pergunta' }), { target: { value: 'Pending question' } });
   fireEvent.submit(screen.getByRole('button', { name: /Perguntar/ }).closest('form')!);
   fireEvent.click(screen.getByRole('button', { name: 'Sair' }));

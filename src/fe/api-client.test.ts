@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AskApiError, askPokemon, askPokemonStream, loginUser, type AskFetcher } from './api-client.js';
+import { AskApiError, askPokemon, askPokemonStream, clearConversations, deleteConversation, getConversation, listConversations, loginUser, type AskFetcher } from './api-client.js';
+
+const context = {
+  userId: '00000000-0000-4000-8000-000000000001',
+  conversationId: '00000000-0000-4000-8000-000000000002',
+};
 
 const result = {
   answer: 'Bulbasaur is a Grass and Poison Pokémon.',
@@ -32,11 +37,11 @@ test('sends a question-only POST request and validates the answer response', asy
     return { ok: true, status: 200, json: async () => result };
   };
 
-  assert.deepEqual(await askPokemon('  Who is Bulbasaur?  ', fetcher), result);
+  assert.deepEqual(await askPokemon('  Who is Bulbasaur?  ', context, fetcher), result);
   assert.equal(receivedUrl, '/ask');
   assert.equal(receivedInit?.method, 'POST');
   assert.equal(new Headers(receivedInit?.headers).get('content-type'), 'application/json');
-  assert.deepEqual(JSON.parse(String(receivedInit?.body)), { question: 'Who is Bulbasaur?' });
+  assert.deepEqual(JSON.parse(String(receivedInit?.body)), { question: 'Who is Bulbasaur?', ...context });
 });
 
 test('rejects an empty question before making the request', async () => {
@@ -45,13 +50,13 @@ test('rejects an empty question before making the request', async () => {
     called = true;
     return { ok: true, status: 200, json: async () => result };
   };
-  await assert.rejects(askPokemon('  ', fetcher));
+  await assert.rejects(askPokemon('  ', context, fetcher));
   assert.equal(called, false);
 });
 
 test('turns HTTP errors into a safe displayable error with status', async () => {
   const fetcher: AskFetcher = async () => ({ ok: false, status: 500, json: async () => ({ error: 'internal detail' }) });
-  await assert.rejects(askPokemon('Who is Bulbasaur?', fetcher), (error: unknown) => {
+  await assert.rejects(askPokemon('Who is Bulbasaur?', context, fetcher), (error: unknown) => {
     assert.ok(error instanceof AskApiError);
     assert.equal(error.status, 500);
     assert.doesNotMatch(error.message, /internal detail/);
@@ -62,17 +67,36 @@ test('turns HTTP errors into a safe displayable error with status', async () => 
 test('rejects malformed JSON and invalid answer payloads', async () => {
   const invalidJson: AskFetcher = async () => ({ ok: true, status: 200, json: async () => { throw new Error('bad JSON'); } });
   const invalidShape: AskFetcher = async () => ({ ok: true, status: 200, json: async () => ({ answer: '', sources: [] }) });
-  await assert.rejects(askPokemon('Who is Bulbasaur?', invalidJson), AskApiError);
-  await assert.rejects(askPokemon('Who is Bulbasaur?', invalidShape), AskApiError);
+  await assert.rejects(askPokemon('Who is Bulbasaur?', context, invalidJson), AskApiError);
+  await assert.rejects(askPokemon('Who is Bulbasaur?', context, invalidShape), AskApiError);
 });
 
 test('converts network errors into a safe displayable error', async () => {
   const fetcher: AskFetcher = async () => { throw new Error('network internals'); };
-  await assert.rejects(askPokemon('Who is Bulbasaur?', fetcher), (error: unknown) => {
+  await assert.rejects(askPokemon('Who is Bulbasaur?', context, fetcher), (error: unknown) => {
     assert.ok(error instanceof AskApiError);
     assert.doesNotMatch(error.message, /network internals/);
     return true;
   });
+});
+
+test('uses validated API routes for history, detail, and destructive conversation mutations', async () => {
+  const calls: Array<{ url: string; method: string }> = [];
+  const fetcher: AskFetcher = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, method: init?.method ?? 'GET' });
+    if (url.includes('?')) return { ok: true, status: 200, json: async () => ({ conversations: [], nextCursor: null }) };
+    if (init?.method === 'DELETE') return { ok: true, status: 200, json: async () => ({ deleted: true }) };
+    return { ok: true, status: 200, json: async () => ({ id: context.conversationId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), interactions: [] }) };
+  };
+  await listConversations(context.userId, { limit: 10, cursor: 'abc' }, fetcher);
+  await getConversation(context.userId, context.conversationId, fetcher);
+  await deleteConversation(context.userId, context.conversationId, fetcher);
+  await clearConversations(context.userId, fetcher);
+  assert.deepEqual(calls.map(({ method }) => method), ['GET', 'GET', 'DELETE', 'DELETE']);
+  assert.match(calls[0]!.url, /limit=10&cursor=abc/);
+  assert.match(calls[2]!.url, new RegExp(context.conversationId));
+  assert.match(calls[3]!.url, /conversations$/);
 });
 
 function streamResponse(body: string, chunks?: number[]): Response {
@@ -100,6 +124,7 @@ test('reads split SSE frames and UTF-8 chunks from /ask/stream', async () => {
   let receivedUrl: RequestInfo | URL | undefined;
   let draft = '';
   const answer = await askPokemonStream('Who is Bulbasaur?', {
+    ...context,
     fetcher: async (input) => { receivedUrl = input; return streamResponse(wire, [splitAt, 1]); },
     onDelta: (text) => { draft += text; },
   });
@@ -113,6 +138,7 @@ test('retries incomplete streams at most three times and clears each partial dra
   const replacements: string[] = [];
   const retryAttempts: number[] = [];
   const answer = await askPokemonStream('Who is Bulbasaur?', {
+    ...context,
     fetcher: async () => {
       calls += 1;
       if (calls < 4) return streamResponse('event: delta\ndata: {"type":"delta","text":"partial"}\n\n');
@@ -131,11 +157,13 @@ test('retries incomplete streams at most three times and clears each partial dra
 test('does not retry non-retryable 4xx responses or a non-retryable stream error', async () => {
   let calls = 0;
   await assert.rejects(askPokemonStream('Who is Bulbasaur?', {
+    ...context,
     fetcher: async () => { calls += 1; return new Response('{}', { status: 400 }); },
     delay: async () => undefined,
   }), (error: unknown) => error instanceof AskApiError && error.status === 400);
   assert.equal(calls, 1);
   await assert.rejects(askPokemonStream('Who is Bulbasaur?', {
+    ...context,
     fetcher: async () => { calls += 1; return streamResponse('event: error\ndata: {"type":"error","error":"Rejected","retryable":false}\n\n'); },
   }));
   assert.equal(calls, 2);

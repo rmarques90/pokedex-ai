@@ -1,6 +1,7 @@
 import { AskQuestionSchema, AskResultSchema, type AskResult } from '../domain/ask.js';
 import { AskStreamEventSchema, type AskStreamEvent } from '../domain/ask-stream.js';
 import { PublicUserSchema, type PublicUser } from '../domain/user.js';
+import { ConversationDetailSchema, ConversationPageSchema, type ConversationDetail, type ConversationPage } from '../domain/conversation.js';
 
 export type AskResponse = Pick<Response, 'ok' | 'status' | 'json'>;
 export type AskFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<AskResponse>;
@@ -35,7 +36,12 @@ export async function loginUser(nameInput: unknown, fetcher: LoginFetcher = fetc
   }
 }
 
-export interface AskStreamOptions {
+export interface AskConversationContext {
+  userId: string;
+  conversationId: string;
+}
+
+export interface AskStreamOptions extends AskConversationContext {
   signal?: AbortSignal;
   onDelta?: (text: string) => void;
   onReplace?: (text: string, reason: 'fallback' | 'revision' | 'retry') => void;
@@ -57,14 +63,14 @@ export class AskApiError extends Error {
   }
 }
 
-export async function askPokemon(questionInput: unknown, fetcher: AskFetcher = fetch): Promise<AskResult> {
+export async function askPokemon(questionInput: unknown, context: AskConversationContext, fetcher: AskFetcher = fetch): Promise<AskResult> {
   const question = AskQuestionSchema.parse(questionInput);
   let response: AskResponse;
   try {
     response = await fetcher('/ask', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, ...context }),
     });
   } catch (error) {
     throw new AskApiError(undefined, { cause: error });
@@ -84,7 +90,41 @@ export async function askPokemon(questionInput: unknown, fetcher: AskFetcher = f
   return parsed.data;
 }
 
-export async function askPokemonStream(questionInput: unknown, options: AskStreamOptions = {}): Promise<AskResult> {
+export async function listConversations(userId: string, options: { limit?: number; cursor?: string } = {}, fetcher: AskFetcher = fetch): Promise<ConversationPage> {
+  const url = new URL(`/users/${encodeURIComponent(userId)}/conversations`, globalThis.location?.origin ?? 'http://localhost');
+  if (options.limit !== undefined) url.searchParams.set('limit', String(options.limit));
+  if (options.cursor) url.searchParams.set('cursor', options.cursor);
+  const response = await requestJson(fetcher, url.pathname + url.search, { method: 'GET' });
+  const parsed = ConversationPageSchema.safeParse(response);
+  if (!parsed.success) throw new AskApiError(undefined, { cause: parsed.error });
+  return parsed.data;
+}
+
+export async function getConversation(userId: string, conversationId: string, fetcher: AskFetcher = fetch): Promise<ConversationDetail> {
+  const response = await requestJson(fetcher, `/users/${encodeURIComponent(userId)}/conversations/${encodeURIComponent(conversationId)}`, { method: 'GET' });
+  const parsed = ConversationDetailSchema.safeParse(response);
+  if (!parsed.success) throw new AskApiError(undefined, { cause: parsed.error });
+  return parsed.data;
+}
+
+export async function deleteConversation(userId: string, conversationId: string, fetcher: AskFetcher = fetch): Promise<void> {
+  await requestJson(fetcher, `/users/${encodeURIComponent(userId)}/conversations/${encodeURIComponent(conversationId)}`, { method: 'DELETE' });
+}
+
+export async function clearConversations(userId: string, fetcher: AskFetcher = fetch): Promise<void> {
+  await requestJson(fetcher, `/users/${encodeURIComponent(userId)}/conversations`, { method: 'DELETE' });
+}
+
+async function requestJson(fetcher: AskFetcher, url: string, init: RequestInit): Promise<unknown> {
+  let response: AskResponse;
+  try { response = await fetcher(url, init); }
+  catch (error) { throw new AskApiError(undefined, { cause: error }); }
+  if (!response.ok) throw new AskApiError(response.status);
+  try { return await response.json(); }
+  catch (error) { throw new AskApiError(response.status, { cause: error }); }
+}
+
+export async function askPokemonStream(questionInput: unknown, options: AskStreamOptions): Promise<AskResult> {
   const question = AskQuestionSchema.parse(questionInput);
   const maxRetries = options.maxRetries ?? 3;
   for (let attempt = 0; ; attempt += 1) {
@@ -109,7 +149,7 @@ async function readStreamAttempt(question: string, options: AskStreamOptions): P
     response = await (options.fetcher ?? fetch)('/ask/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, userId: options.userId, conversationId: options.conversationId }),
       signal: options.signal,
     });
   } catch (error) {

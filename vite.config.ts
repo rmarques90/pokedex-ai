@@ -8,6 +8,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:3000',
         changeOrigin: true,
       },
+      '/users': {
+        target: 'http://127.0.0.1:3000',
+        changeOrigin: true,
+      },
       '/ask': {
         target: 'http://127.0.0.1:3000',
         changeOrigin: true,
